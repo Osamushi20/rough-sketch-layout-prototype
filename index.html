@@ -1,0 +1,834 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>ラフ → レイアウト 変換ロジック 試作 02</title>
+
+<style>
+  :root{
+    --paper:#E4E6E1;
+    --card:#FAFAF8;
+    --ink:#16181A;
+    --ink-2:#5C625F;
+    --rule:#C3C6C0;
+    --annotate:#1F4E8C;
+    --signal:#A8206E;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, monospace;
+    --sans: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--paper); color:var(--ink);
+    font-family:var(--sans);
+    -webkit-text-size-adjust:100%;
+    overscroll-behavior:none;
+    -webkit-user-select:none; user-select:none;
+  }
+  input{ -webkit-user-select:text; user-select:text; }
+
+  .shell{ height:100%; display:grid; grid-template-rows:auto 1fr; }
+
+  .topbar{
+    display:flex; flex-wrap:wrap; align-items:center; gap:14px;
+    padding:9px 14px; background:var(--card); border-bottom:1px solid var(--rule);
+  }
+  .brand{ font-family:var(--mono); font-size:10px; letter-spacing:.14em;
+          color:var(--ink-2); text-transform:uppercase; white-space:nowrap; }
+  .brand b{ color:var(--ink); font-weight:600; }
+
+  .field{ display:flex; align-items:center; gap:6px; }
+  .field label{ font-family:var(--mono); font-size:10px; letter-spacing:.08em;
+                color:var(--ink-2); white-space:nowrap; }
+  .field input{
+    font-family:var(--sans); font-size:14px; color:var(--ink);
+    background:transparent; border:0; border-bottom:1px solid var(--rule);
+    padding:3px 2px; width:170px; border-radius:0;
+  }
+  .field input.narrow{ width:104px; }
+  .field input:focus{ outline:none; border-bottom-color:var(--signal); }
+
+  .tones{ display:flex; border:1px solid var(--rule); }
+  .tones button{
+    font-family:var(--sans); font-size:12.5px; padding:5px 11px;
+    background:transparent; color:var(--ink-2);
+    border:0; border-right:1px solid var(--rule); cursor:pointer;
+  }
+  .tones button:last-child{ border-right:0; }
+  .tones button[aria-pressed="true"]{ background:var(--signal); color:#fff; }
+
+  .spacer{ flex:1 1 auto; }
+  .acts{ display:flex; gap:6px; }
+  .acts button{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.06em;
+    padding:6px 10px; background:transparent; color:var(--ink-2);
+    border:1px solid var(--rule); cursor:pointer;
+  }
+  .acts button:active{ background:var(--ink); color:var(--card); }
+
+  .split{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.05fr); min-height:0; }
+  @media (max-width:900px){
+    .split{ grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) minmax(0,1fr); }
+  }
+
+  .left{ position:relative; min-height:0; display:grid;
+         grid-template-rows:minmax(0,1fr) auto; border-right:1px solid var(--rule); }
+
+  .stage{
+    position:relative; min-height:0; background:var(--card);
+    background-image:
+      linear-gradient(to right, rgba(31,78,140,.055) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(31,78,140,.055) 1px, transparent 1px);
+    background-size:26px 26px;
+    touch-action:none; overflow:hidden;
+  }
+  canvas#ink{ position:absolute; inset:0; width:100%; height:100%;
+              touch-action:none; cursor:crosshair; }
+
+  /* 推論された塊の注記 */
+  .anno{ position:absolute; inset:0; pointer-events:none; }
+  .anno .box{ position:absolute; border:1px solid var(--annotate); opacity:.6; }
+  .anno .tag{
+    position:absolute; font-family:var(--mono); font-size:9.5px; letter-spacing:.06em;
+    color:var(--card); background:var(--annotate); padding:2px 5px;
+    white-space:nowrap; transform:translateY(-100%);
+  }
+
+  /* 置いたパーツ */
+  .parts{ position:absolute; inset:0; }
+  .part{
+    position:absolute;
+    border:1.5px dashed var(--annotate);
+    background:rgba(31,78,140,.055);
+    touch-action:none; cursor:move;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .part .lb{
+    position:absolute; left:-1.5px; top:-1.5px;
+    font-family:var(--mono); font-size:9.5px; letter-spacing:.06em;
+    color:var(--card); background:var(--annotate); padding:2px 5px;
+    transform:translateY(-100%); white-space:nowrap;
+  }
+  .part .gl{ opacity:.5; max-width:70%; max-height:70%; }
+  .part .rm{
+    position:absolute; right:-11px; top:-11px; width:22px; height:22px;
+    border-radius:11px; background:var(--signal); color:#fff;
+    font-size:13px; line-height:22px; text-align:center; cursor:pointer;
+  }
+  .part .rz{
+    position:absolute; right:-8px; bottom:-8px; width:18px; height:18px;
+    background:var(--annotate); cursor:nwse-resize;
+    clip-path:polygon(100% 0,100% 100%,0 100%);
+  }
+
+  .ghost{
+    position:fixed; pointer-events:none; z-index:50;
+    border:1.5px dashed var(--annotate); background:rgba(31,78,140,.10);
+    transform:translate(-50%,-50%);
+  }
+
+  .hint{ position:absolute; left:0; right:0; top:44%; transform:translateY(-50%);
+         text-align:center; color:var(--ink-2); font-size:14px; line-height:1.95;
+         pointer-events:none; padding:0 20px; }
+  .hint .k{ font-family:var(--mono); font-size:11px; letter-spacing:.1em;
+            display:block; margin-bottom:10px; }
+
+  .legend{ border-top:1px solid var(--rule); background:var(--card); padding:9px 12px 11px; }
+  .legend h3{ margin:0 0 8px; font-family:var(--mono); font-size:10px;
+              letter-spacing:.14em; color:var(--ink-2); font-weight:500; }
+  .legend h3 em{ font-style:normal; color:var(--annotate); }
+  .legend ul{ display:flex; flex-wrap:wrap; gap:6px 8px; margin:0; padding:0; list-style:none; }
+  .legend li{
+    display:flex; align-items:center; gap:6px;
+    padding:4px 9px 4px 5px; border:1px solid var(--rule);
+    touch-action:none; cursor:grab;
+  }
+  .legend li:active{ background:rgba(31,78,140,.09); border-color:var(--annotate); }
+  .legend svg{ display:block; }
+  .legend span{ font-size:11.5px; color:var(--ink-2); }
+
+  .right{
+    min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px;
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(210px,1fr));
+    gap:14px; align-content:start;
+  }
+  .variant{ min-width:0; }
+  .variant header{ display:flex; align-items:baseline; gap:7px; margin-bottom:7px; }
+  .variant .no{ font-family:var(--mono); font-size:10px; color:var(--signal); letter-spacing:.1em; }
+  .variant .nm{ font-size:12.5px; color:var(--ink); }
+  .variant .desc{ font-size:10.5px; color:var(--ink-2); margin-top:5px; line-height:1.6; }
+  .frame{
+    position:relative; width:100%; aspect-ratio:360/509; overflow:hidden;
+    background:var(--card);
+    box-shadow:0 1px 0 rgba(0,0,0,.14), 0 6px 18px rgba(0,0,0,.07);
+  }
+  .sheet{ position:absolute; top:0; left:0; width:360px; height:509px;
+          transform-origin:top left; overflow:hidden; }
+  .sheet .e{ position:absolute; overflow:hidden; }
+
+  .empty{ grid-column:1/-1; font-size:13px; color:var(--ink-2); line-height:2; padding:10px 2px; }
+  .empty code{ font-family:var(--mono); font-size:11.5px; }
+
+  .readout{ grid-column:1/-1; border-top:1px solid var(--rule); padding-top:11px; margin-top:2px; }
+  .readout h3{ margin:0 0 7px; font-family:var(--mono); font-size:10px;
+               letter-spacing:.14em; color:var(--ink-2); font-weight:500; }
+  .readout table{ width:100%; border-collapse:collapse; font-family:var(--mono); font-size:10.5px; }
+  .readout td{ padding:3px 8px 3px 0; color:var(--ink-2); vertical-align:top;
+               border-bottom:1px dotted var(--rule); }
+  .readout td.r{ color:var(--annotate); white-space:nowrap; }
+  .readout td.w{ color:var(--ink); width:1%; white-space:nowrap; }
+  .readout td.s{ color:var(--signal); white-space:nowrap; }
+</style>
+
+<div class="shell">
+
+  <div class="topbar">
+    <div class="brand"><b>ラフ → レイアウト</b> &nbsp;変換ロジック 試作 02</div>
+    <div class="field">
+      <label for="hd">見出し</label>
+      <input id="hd" value="夏のものづくり教室" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="kw">強調ワード</label>
+      <input id="kw" class="narrow" value="手を動かす" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="tones" id="tones" role="group" aria-label="トーン"></div>
+    <div class="spacer"></div>
+    <div class="acts">
+      <button id="undo" type="button">1本もどす</button>
+      <button id="clear" type="button">全部消す</button>
+    </div>
+  </div>
+
+  <div class="split">
+    <div class="left">
+      <div class="stage" id="stage">
+        <canvas id="ink"></canvas>
+        <div class="anno" id="anno"></div>
+        <div class="parts" id="partsLayer"></div>
+        <div class="hint" id="hint">
+          <span class="k">描く　または　置く</span>
+          キャンバスに直接描くと、線から役割を推し量ります。<br>
+          下の凡例からパーツを引っぱってくると、役割は迷いません。<br>
+          どちらも混ぜられます。
+        </div>
+      </div>
+
+      <div class="legend">
+        <h3>読みとるしるし　<em>／ 引っぱって置ける</em></h3>
+        <ul id="legend"></ul>
+      </div>
+    </div>
+
+    <div class="right" id="right"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =========================================================
+   0. トーン（キーワード → デザイントークン）
+   ========================================================= */
+
+const TONES = {
+  "かわいい": {
+    bg:"#FCF2F4", ink:"#3B2A31", sub:"#8C7078", accent:"#E0567F", accent2:"#F2C8A0",
+    display:'"Hiragino Maru Gothic ProN","Zen Maru Gothic",sans-serif',
+    body:'"Hiragino Maru Gothic ProN",sans-serif',
+    weight:700, radius:13, tracking:"0.01em", lead:1.85, motif:"dots", airy:1.0
+  },
+  "きりっと": {
+    bg:"#F3F4F5", ink:"#111518", sub:"#6B7278", accent:"#1F4E8C", accent2:"#B9C2CB",
+    display:'"Hiragino Sans","Helvetica Neue",sans-serif',
+    body:'"Hiragino Sans",sans-serif',
+    weight:800, radius:0, tracking:"-0.015em", lead:1.65, motif:"rule", airy:0.9
+  },
+  "にぎやか": {
+    bg:"#FFF7DF", ink:"#1E2019", sub:"#6E6A52", accent:"#E4590A", accent2:"#2E9E6B",
+    display:'"Hiragino Sans",sans-serif', body:'"Hiragino Sans",sans-serif',
+    weight:800, radius:5, tracking:"0.005em", lead:1.7, motif:"confetti", airy:0.8
+  },
+  "しずか": {
+    bg:"#ECEDE8", ink:"#2A2C29", sub:"#7C827C", accent:"#5E6E62", accent2:"#C8CCC4",
+    display:'"Hiragino Mincho ProN",serif', body:'"Hiragino Mincho ProN",serif',
+    weight:500, radius:0, tracking:"0.06em", lead:2.05, motif:"none", airy:1.25
+  }
+};
+let tone = "かわいい";
+
+const DUMMY = [
+  "毎週土曜日の午後、手を動かしながら",
+  "考える時間をひらいています。はじめて",
+  "の人も、途中から来る人も歓迎です。",
+  "道具はこちらで用意します。",
+  "つくったものは持ち帰れます。"
+];
+
+const ROLE_JA = { heading:"見出し", body:"本文", image:"画像", logo:"ロゴ",
+                  button:"ボタン", label:"日付・場所", decor:"飾り" };
+
+/* 置いたときの初期サイズ（キャンバスに対する比） */
+const PART_SIZE = {
+  heading:[0.56,0.10], body:[0.52,0.20], image:[0.42,0.24],
+  logo:[0.11,0.08], button:[0.24,0.06], label:[0.32,0.05]
+};
+
+/* =========================================================
+   1. 入力
+   ========================================================= */
+
+const stage      = document.getElementById("stage");
+const canvas     = document.getElementById("ink");
+const ctx        = canvas.getContext("2d");
+const annoEl     = document.getElementById("anno");
+const partsLayer = document.getElementById("partsLayer");
+const hintEl     = document.getElementById("hint");
+
+let strokes = [];
+let parts   = [];        // {id,r,x,y,w,h}
+let current = null;
+let penSeen = false;
+let W = 0, H = 0;
+let seq = 0;
+
+function fitCanvas(){
+  const r = stage.getBoundingClientRect();
+  const d = window.devicePixelRatio || 1;
+  W = r.width; H = r.height;
+  canvas.width  = Math.round(W*d);
+  canvas.height = Math.round(H*d);
+  ctx.setTransform(d,0,0,d,0,0);
+  redraw();
+}
+new ResizeObserver(fitCanvas).observe(stage);
+
+function pos(e){
+  const r = canvas.getBoundingClientRect();
+  return { x:e.clientX-r.left, y:e.clientY-r.top, p:(e.pressure>0 ? e.pressure : 0.45) };
+}
+
+canvas.addEventListener("pointerdown", e => {
+  if (e.pointerType === "pen") penSeen = true;
+  if (e.pointerType === "touch" && penSeen) return;
+  canvas.setPointerCapture(e.pointerId);
+  current = { pts:[pos(e)] };
+  strokes.push(current);
+  hintEl.style.display = "none";
+  e.preventDefault();
+});
+canvas.addEventListener("pointermove", e => {
+  if (!current) return;
+  const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for (const ev of evs) current.pts.push(pos(ev));
+  drawStroke(current, current.pts.length - evs.length - 1);
+  e.preventDefault();
+});
+function endStroke(){
+  if (!current) return;
+  if (current.pts.length < 2) strokes.pop();
+  current = null;
+  analyze();
+}
+canvas.addEventListener("pointerup", endStroke);
+canvas.addEventListener("pointercancel", endStroke);
+canvas.addEventListener("pointerleave", endStroke);
+document.addEventListener("gesturestart", e => e.preventDefault());
+
+function drawStroke(s, from){
+  ctx.lineCap="round"; ctx.lineJoin="round"; ctx.strokeStyle="#16181A";
+  for (let i=Math.max(1,from|0); i<s.pts.length; i++){
+    const a=s.pts[i-1], b=s.pts[i];
+    ctx.beginPath();
+    ctx.lineWidth = 1.4 + b.p*5.2;
+    ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+}
+function redraw(){ ctx.clearRect(0,0,W,H); for(const s of strokes) drawStroke(s,1); }
+
+/* =========================================================
+   2. ストローク → プリミティブ
+   ========================================================= */
+
+function measure(s){
+  const P=s.pts;
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9,len=0,sumP=0;
+  for(let i=0;i<P.length;i++){
+    const p=P[i];
+    if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y;
+    sumP+=p.p;
+    if(i) len+=Math.hypot(p.x-P[i-1].x, p.y-P[i-1].y);
+  }
+  const w=x1-x0, h=y1-y0, diag=Math.hypot(w,h)||1;
+  const closure=Math.hypot(P[0].x-P[P.length-1].x, P[0].y-P[P.length-1].y)/diag;
+  let rev=0, prev=0;
+  for(let i=1;i<P.length;i++){
+    const dx=P[i].x-P[i-1].x;
+    if(Math.abs(dx)<1.2) continue;
+    if(dx*prev<0) rev++;
+    prev=dx;
+  }
+  let a2=0;
+  for(let i=0;i<P.length;i++){ const q=P[(i+1)%P.length]; a2+=P[i].x*q.y-q.x*P[i].y; }
+  const fill=Math.abs(a2/2)/Math.max(w*h,1);
+  return { x0,y0,x1,y1,w,h,len,diag,closure,rev,fill,
+           ar:w/Math.max(h,1), wiggle:len/diag, press:sumP/P.length };
+}
+
+function primitive(m){
+  const unit=Math.min(W,H);
+  if(m.diag < unit*0.035) return "dot";
+  if(m.closure<0.30 && m.w>unit*0.07 && m.h>unit*0.07 && m.wiggle<7)
+    return m.fill>0.86 ? "rect" : "ellipse";
+  if(m.rev>=5 && m.wiggle>2.6) return "scribble";
+  if(m.ar>3.2)  return "hline";
+  if(m.ar<0.30) return "vline";
+  return "mark";
+}
+
+/* =========================================================
+   3. 塊にまとめる
+   横並びより縦積みのほうがまとまりやすいよう、余白を縦に厚く取る。
+   （見出しの2行目が別物として切り離される問題への対処）
+   ========================================================= */
+
+function group(items){
+  const unit = Math.min(W,H);
+  const px = unit*0.040;
+  const py = unit*0.075;                 // 縦は約2倍
+  const parent = items.map((_,i)=>i);
+  const find = a => parent[a]===a ? a : (parent[a]=find(parent[a]));
+  const hit = (a,b) => !(a.x1+px < b.x0-px || b.x1+px < a.x0-px ||
+                         a.y1+py < b.y0-py || b.y1+py < a.y0-py);
+  for(let i=0;i<items.length;i++)
+    for(let j=i+1;j<items.length;j++)
+      if(hit(items[i].m, items[j].m)) parent[find(i)]=find(j);
+  const bag=new Map();
+  items.forEach((it,i)=>{ const k=find(i); if(!bag.has(k)) bag.set(k,[]); bag.get(k).push(it); });
+  return [...bag.values()];
+}
+
+function bboxOf(members){
+  const x0=Math.min(...members.map(m=>m.m.x0));
+  const y0=Math.min(...members.map(m=>m.m.y0));
+  const x1=Math.max(...members.map(m=>m.m.x1));
+  const y1=Math.max(...members.map(m=>m.m.y1));
+  return { x0,y0,x1,y1, w:x1-x0, h:y1-y0 };
+}
+
+function role(members){
+  const kinds = members.map(m=>m.k);
+  const has = k => kinds.includes(k);
+  const n   = k => kinds.filter(x=>x===k).length;
+  const box = bboxOf(members);
+  const area = (box.w*box.h)/(W*H);
+  const wide = box.w/W;
+  const upper = (box.y0+box.h/2)/H;
+  const closed = has("rect")||has("ellipse");
+  let r, why;
+
+  if(closed && members.length>=2 && (has("mark")||has("hline")||has("vline"))){
+    r="image"; why="囲み＋中に線";
+  } else if(n("hline")>=3){
+    r="body"; why="横線が"+n("hline")+"本";
+  } else if(has("scribble") && area>0.035){
+    r="image"; why="面を塗りつぶす動き";
+  } else if(has("scribble")){
+    r="decor"; why="小さな塗り";
+  } else if(n("hline")>=1 && n("hline")<=2 && wide>0.30 && upper<0.45){
+    r="heading"; why=n("hline")===2 ? "上部の長い横線が2本（1行目・2行目）" : "上部の長い横線";
+  } else if(closed && box.w/Math.max(box.h,1)>2.2 && box.h/H<0.10){
+    r="button"; why="横長の囲み";
+  } else if(closed && area<0.016){
+    r="logo"; why="小さな囲み";
+  } else if(closed){
+    r="image"; why="大きな囲み";
+  } else if(n("hline")>=1){
+    r="label"; why="短い横線";
+  } else if(has("dot")){
+    r="decor"; why="点";
+  } else {
+    r = area>0.03 ? "image" : "label";
+    why = area>0.03 ? "大きな筆致" : "小さな筆致";
+  }
+  return { r, why, box, area };
+}
+
+/* 縦に並んだ同じ役割は、あとからひとつに縫い合わせる */
+function stitch(list){
+  const unit = Math.min(W,H);
+  let changed = true;
+  while(changed){
+    changed = false;
+    outer:
+    for(let i=0;i<list.length;i++){
+      for(let j=i+1;j<list.length;j++){
+        const a=list[i], b=list[j];
+        if(!(a.r==="heading"||a.r==="label"||a.r==="body")) continue;
+        if(!(b.r==="heading"||b.r==="label"||b.r==="body")) continue;
+        const ov = Math.min(a.box.x1,b.box.x1) - Math.max(a.box.x0,b.box.x0);
+        const ratio = ov / Math.max(1, Math.min(a.box.w, b.box.w));
+        const gap = Math.max(a.box.y0,b.box.y0) - Math.min(a.box.y1,b.box.y1);
+        if(ratio > 0.45 && gap < unit*0.11){
+          const merged = [...a.members, ...b.members];
+          const g = role(merged);
+          const kinds = merged.map(m=>m.k);
+          const nh = kinds.filter(x=>x==="hline").length;
+          if(nh>=3){ g.r="body"; g.why="横線が"+nh+"本（縫い合わせ）"; }
+          else if(g.r!=="body"){ g.why += "（縫い合わせ）"; }
+          list.splice(j,1); list.splice(i,1);
+          list.push({ ...g, members:merged, kinds, n:merged.length, src:"描" });
+          changed = true;
+          break outer;
+        }
+      }
+    }
+  }
+  return list;
+}
+
+let blocks = [];
+
+function analyze(){
+  const items = strokes.map(s => { const m=measure(s); return { m, k:primitive(m) }; });
+  let derived = group(items).map(ms => {
+    const g = role(ms);
+    return { ...g, members:ms, kinds:ms.map(m=>m.k), n:ms.length, src:"描" };
+  });
+  derived = stitch(derived);
+
+  const placed = parts.map(p => ({
+    r:p.r, why:"凡例から置いた", src:"置", n:1, kinds:["part"],
+    box:{ x0:p.x, y0:p.y, x1:p.x+p.w, y1:p.y+p.h, w:p.w, h:p.h },
+    area:(p.w*p.h)/(W*H)
+  }));
+
+  blocks = [...derived, ...placed]
+    .sort((a,b) => (a.box.y0-b.box.y0) || (a.box.x0-b.box.x0));
+
+  drawAnnotations();
+  renderAll();
+}
+
+function drawAnnotations(){
+  annoEl.innerHTML = blocks.filter(b=>b.src==="描").map(b=>{
+    const pad=7;
+    const st=`left:${b.box.x0-pad}px;top:${b.box.y0-pad}px;`+
+             `width:${b.box.w+pad*2}px;height:${b.box.h+pad*2}px;`;
+    return `<div class="box" style="${st}"></div>`+
+           `<div class="tag" style="left:${b.box.x0-pad}px;top:${b.box.y0-pad-2}px;">${ROLE_JA[b.r]}</div>`;
+  }).join("");
+}
+
+/* =========================================================
+   4. 凡例から引っぱって置く
+   ========================================================= */
+
+const GLYPHS = {
+  heading: `<line x1="4" y1="12" x2="40" y2="11" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/>`,
+  body:    `<line x1="6" y1="6"  x2="38" y2="6"  stroke="currentColor" stroke-width="1.6"/>
+            <line x1="6" y1="11" x2="38" y2="11" stroke="currentColor" stroke-width="1.6"/>
+            <line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="1.6"/>
+            <line x1="6" y1="21" x2="27" y2="21" stroke="currentColor" stroke-width="1.6"/>`,
+  image:   `<rect x="6" y="4" width="32" height="17" fill="none" stroke="currentColor" stroke-width="1.8"/>
+            <line x1="6" y1="4" x2="38" y2="21" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="38" y1="4" x2="6" y2="21" stroke="currentColor" stroke-width="1.5"/>`,
+  logo:    `<circle cx="22" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/>`,
+  button:  `<rect x="4" y="7" width="36" height="11" rx="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/>`,
+  label:   `<line x1="12" y1="12" x2="32" y2="12" stroke="currentColor" stroke-width="1.6"/>`
+};
+const ORDER = ["heading","body","image","logo","button","label"];
+
+document.getElementById("legend").innerHTML = ORDER.map(r =>
+  `<li data-r="${r}"><svg width="44" height="25" viewBox="0 0 44 25" style="color:#16181A">${GLYPHS[r]}</svg><span>${ROLE_JA[r]}</span></li>`
+).join("");
+
+let ghost = null;
+
+document.getElementById("legend").addEventListener("pointerdown", e => {
+  const li = e.target.closest("li"); if(!li) return;
+  const r = li.dataset.r;
+  const [rw, rh] = PART_SIZE[r];
+  li.setPointerCapture(e.pointerId);
+  e.preventDefault();
+
+  ghost = document.createElement("div");
+  ghost.className = "ghost";
+  ghost.style.width  = (W*rw)+"px";
+  ghost.style.height = (H*rh)+"px";
+  document.body.appendChild(ghost);
+  moveGhost(e);
+
+  const move = ev => { moveGhost(ev); ev.preventDefault(); };
+  const up = ev => {
+    li.releasePointerCapture(ev.pointerId);
+    li.removeEventListener("pointermove", move);
+    li.removeEventListener("pointerup", up);
+    const s = stage.getBoundingClientRect();
+    const inside = ev.clientX>s.left && ev.clientX<s.right && ev.clientY>s.top && ev.clientY<s.bottom;
+    ghost.remove(); ghost = null;
+    if(inside){
+      const w = W*rw, h = H*rh;
+      parts.push({
+        id: ++seq, r,
+        x: Math.max(0, Math.min(W-w, ev.clientX - s.left - w/2)),
+        y: Math.max(0, Math.min(H-h, ev.clientY - s.top  - h/2)),
+        w, h
+      });
+      hintEl.style.display = "none";
+      renderParts(); analyze();
+    }
+  };
+  li.addEventListener("pointermove", move);
+  li.addEventListener("pointerup", up);
+});
+
+function moveGhost(e){
+  if(!ghost) return;
+  ghost.style.left = e.clientX+"px";
+  ghost.style.top  = e.clientY+"px";
+}
+
+function renderParts(){
+  partsLayer.innerHTML = parts.map(p => `
+    <div class="part" data-id="${p.id}"
+         style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px;">
+      <div class="lb">${ROLE_JA[p.r]}</div>
+      <svg class="gl" width="44" height="25" viewBox="0 0 44 25"
+           style="color:var(--annotate)">${GLYPHS[p.r]}</svg>
+      <div class="rm" data-act="rm">×</div>
+      <div class="rz" data-act="rz"></div>
+    </div>`).join("");
+}
+
+partsLayer.addEventListener("pointerdown", e => {
+  const el = e.target.closest(".part"); if(!el) return;
+  const id = +el.dataset.id;
+  const p  = parts.find(x => x.id === id);
+  const act = e.target.dataset.act;
+  e.preventDefault(); e.stopPropagation();
+
+  if(act === "rm"){
+    parts = parts.filter(x => x.id !== id);
+    renderParts(); analyze();
+    if(!parts.length && !strokes.length) hintEl.style.display = "";
+    return;
+  }
+
+  el.setPointerCapture(e.pointerId);
+  const s = stage.getBoundingClientRect();
+  const ox = e.clientX - s.left - p.x;
+  const oy = e.clientY - s.top  - p.y;
+
+  const move = ev => {
+    if(act === "rz"){
+      p.w = Math.max(26, Math.min(W - p.x, ev.clientX - s.left - p.x));
+      p.h = Math.max(18, Math.min(H - p.y, ev.clientY - s.top  - p.y));
+    } else {
+      p.x = Math.max(0, Math.min(W - p.w, ev.clientX - s.left - ox));
+      p.y = Math.max(0, Math.min(H - p.h, ev.clientY - s.top  - oy));
+    }
+    el.style.left=p.x+"px"; el.style.top=p.y+"px";
+    el.style.width=p.w+"px"; el.style.height=p.h+"px";
+    ev.preventDefault();
+  };
+  const up = ev => {
+    el.releasePointerCapture(ev.pointerId);
+    el.removeEventListener("pointermove", move);
+    el.removeEventListener("pointerup", up);
+    analyze();
+  };
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", up);
+});
+
+/* =========================================================
+   5. レイアウト：同じ読みから3案
+   ========================================================= */
+
+const SHEET_W=360, SHEET_H=509;
+function norm(b){ return { x:b.box.x0/W, y:b.box.y0/H, w:b.box.w/W, h:b.box.h/H, r:b.r }; }
+
+function planFaithful(ns, t){
+  const m = 20*t.airy;
+  return ns.map(e => ({
+    r:e.r,
+    x: m + e.x*(SHEET_W-m*2),
+    y: m + e.y*(SHEET_H-m*2),
+    w: Math.max(24, e.w*(SHEET_W-m*2)),
+    h: Math.max(12, e.h*(SHEET_H-m*2))
+  }));
+}
+function planStacked(ns, t){
+  const m=30*t.airy, gap=15*t.airy, inner=SHEET_W-m*2;
+  const wt={heading:0.20,image:0.34,body:0.24,button:0.09,label:0.07,logo:0.07,decor:0.05};
+  const total=ns.reduce((s,e)=>s+(wt[e.r]||0.1),0)||1;
+  const avail=SHEET_H-m*2-gap*(ns.length-1);
+  let y=m;
+  return ns.map(e=>{
+    const h=avail*((wt[e.r]||0.1)/total);
+    const full=(e.r==="heading"||e.r==="image"||e.r==="body");
+    const w=full?inner:inner*Math.min(1,Math.max(0.28,e.w*1.35));
+    const o={r:e.r,x:m,y,w,h}; y+=h+gap; return o;
+  });
+}
+function planHero(ns, t){
+  const m=22*t.airy, inner=SHEET_W-m*2;
+  const hi=ns.reduce((bi,e,i,a)=> (e.w*e.h > a[bi].w*a[bi].h ? i : bi), 0);
+  const rest=ns.filter((_,i)=>i!==hi);
+  const heroH=SHEET_H*0.46;
+  const out=[{ r:ns[hi].r, x:0, y:0, w:SHEET_W, h:heroH, bleed:true }];
+  const gap=12*t.airy;
+  const avail=SHEET_H-heroH-m-gap*Math.max(0,rest.length-1)-m;
+  let y=heroH+m;
+  for(const e of rest){
+    const h=Math.max(18, avail/Math.max(1,rest.length));
+    out.push({ r:e.r, x:m, y, w:inner, h }); y+=h+gap;
+  }
+  return out;
+}
+
+const PLANS=[
+  { no:"A", nm:"置いた通り", fn:planFaithful,
+    desc:"手元の配置と比率をそのまま紙に移す。ラフが強いほど似る。" },
+  { no:"B", nm:"整えた", fn:planStacked,
+    desc:"順番だけ受け取り、余白と幅は組み直す。ラフの粗さが消える。" },
+  { no:"C", nm:"主役を立てた", fn:planHero,
+    desc:"いちばん大きい要素を裁ち落としまで出し、残りを従える。" }
+];
+
+/* =========================================================
+   6. 描画
+   ========================================================= */
+
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function motif(t){
+  if(t.motif==="dots")
+    return `background-image:radial-gradient(${t.accent2} 1.6px, transparent 1.7px);background-size:11px 11px;`;
+  if(t.motif==="rule")
+    return `background-image:repeating-linear-gradient(-45deg,${t.accent2} 0 1px,transparent 1px 7px);`;
+  if(t.motif==="confetti")
+    return `background-image:radial-gradient(${t.accent2} 2px,transparent 2.2px),radial-gradient(${t.accent} 1.4px,transparent 1.6px);background-size:19px 19px,13px 13px;background-position:0 0,7px 9px;`;
+  return "";
+}
+
+function paint(e,t){
+  const base=`left:${e.x}px;top:${e.y}px;width:${e.w}px;height:${e.h}px;`;
+  const rad=e.bleed?0:t.radius;
+  const hd=document.getElementById("hd").value||"見出し";
+  const kw=document.getElementById("kw").value.trim();
+
+  switch(e.r){
+    case "heading":{
+      const size=Math.min(e.h*0.78, e.w/Math.max(3.4, hd.length*0.86));
+      const eyebrow=kw
+        ? `<div style="font-size:${Math.max(8,size*0.26)}px;color:${t.accent};letter-spacing:.18em;margin-bottom:${size*0.22}px;font-weight:600;">${esc(kw)}</div>` : "";
+      return `<div class="e" style="${base}display:flex;flex-direction:column;justify-content:center;">
+        ${eyebrow}
+        <div style="font-family:${t.display};font-weight:${t.weight};font-size:${size}px;
+             line-height:1.22;letter-spacing:${t.tracking};color:${t.ink};">${esc(hd)}</div></div>`;
+    }
+    case "body":{
+      const fs=Math.max(6.5, Math.min(10.5, e.h/6));
+      const lines=DUMMY.slice(0, Math.max(2, Math.floor(e.h/(fs*t.lead))))
+        .map(l=>`<div>${esc(l)}</div>`).join("");
+      return `<div class="e" style="${base}font-family:${t.body};font-size:${fs}px;
+        line-height:${t.lead};color:${t.sub};letter-spacing:${t.tracking};">${lines}</div>`;
+    }
+    case "image":
+      return `<div class="e" style="${base}border-radius:${rad}px;background:${t.accent2}55;${motif(t)}
+        border:${t.motif==='rule'?`1px solid ${t.accent}`:'0'};"></div>`;
+    case "logo":
+      return `<div class="e" style="${base}border-radius:${t.motif==='dots'?'50%':rad+'px'};
+        background:${t.accent};display:flex;align-items:center;justify-content:center;color:${t.bg};
+        font-family:${t.display};font-weight:${t.weight};
+        font-size:${Math.min(e.h*0.44,e.w*0.44)}px;">◎</div>`;
+    case "button":{
+      const fs=Math.max(7.5, Math.min(12, e.h*0.42));
+      return `<div class="e" style="${base}border-radius:${t.motif==='dots'?e.h/2+'px':rad+'px'};
+        background:${t.accent};color:${t.bg};display:flex;align-items:center;justify-content:center;
+        font-family:${t.body};font-weight:600;font-size:${fs}px;letter-spacing:.08em;">申し込む</div>`;
+    }
+    case "label":{
+      const fs=Math.max(6.5, Math.min(10, e.h*0.55));
+      return `<div class="e" style="${base}display:flex;align-items:center;
+        font-family:${t.body};font-size:${fs}px;color:${t.sub};letter-spacing:.14em;">
+        8月23日（土）13:00 — 16:00</div>`;
+    }
+    default:
+      return `<div class="e" style="${base}border-radius:${rad}px;background:${t.accent}22;"></div>`;
+  }
+}
+
+function renderAll(){
+  const right=document.getElementById("right");
+  const t=TONES[tone];
+  if(!blocks.length){
+    right.innerHTML=`<div class="empty">
+      左に描くか、凡例からパーツを引っぱると、ここに案が3つ出ます。<br>
+      たとえば <code>上のほうに横線を1〜2本 → 見出し</code>、
+      <code>四角にバツ → 画像</code>、<code>短い横線を4本 → 本文</code>。
+    </div>`;
+    return;
+  }
+  const ns=blocks.map(norm);
+  right.innerHTML = PLANS.map(p=>{
+    const els=p.fn(ns,t).map(e=>paint(e,t)).join("");
+    return `<div class="variant">
+      <header><span class="no">${p.no}</span><span class="nm">${p.nm}</span></header>
+      <div class="frame"><div class="sheet" style="background:${t.bg};">${els}</div></div>
+      <div class="desc">${p.desc}</div></div>`;
+  }).join("") + readout();
+  scaleSheets();
+}
+
+function readout(){
+  const rows=blocks.map((b,i)=>`<tr>
+    <td class="w">${String(i+1).padStart(2,"0")}</td>
+    <td class="s">${b.src}</td>
+    <td class="r">${ROLE_JA[b.r]}</td>
+    <td>${b.why}　<span style="opacity:.55">[${b.kinds.join(" ")}]</span></td></tr>`).join("");
+  return `<div class="readout">
+    <h3>写像ログ　線${strokes.length}／パーツ${parts.length} → ${blocks.length}ブロック</h3>
+    <table>${rows}</table></div>`;
+}
+
+function scaleSheets(){
+  document.querySelectorAll(".frame").forEach(f=>{
+    const s=f.clientWidth/SHEET_W;
+    f.querySelector(".sheet").style.transform=`scale(${s})`;
+  });
+}
+window.addEventListener("resize", scaleSheets);
+
+/* =========================================================
+   7. 操作
+   ========================================================= */
+
+const tonesEl=document.getElementById("tones");
+tonesEl.innerHTML=Object.keys(TONES).map(k=>
+  `<button type="button" data-t="${k}" aria-pressed="${k===tone}">${k}</button>`).join("");
+tonesEl.addEventListener("click", e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  tone=b.dataset.t;
+  [...tonesEl.children].forEach(x=>x.setAttribute("aria-pressed", x===b));
+  renderAll();
+});
+
+document.getElementById("hd").addEventListener("input", renderAll);
+document.getElementById("kw").addEventListener("input", renderAll);
+
+document.getElementById("undo").addEventListener("click", ()=>{
+  if(strokes.length) strokes.pop();
+  else parts.pop();
+  redraw(); renderParts(); analyze();
+  if(!strokes.length && !parts.length) hintEl.style.display="";
+});
+document.getElementById("clear").addEventListener("click", ()=>{
+  strokes=[]; parts=[]; blocks=[];
+  redraw(); annoEl.innerHTML=""; renderParts();
+  hintEl.style.display=""; renderAll();
+});
+
+fitCanvas();
+renderAll();
+</script>
