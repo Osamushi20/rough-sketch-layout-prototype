@@ -184,14 +184,10 @@
   .media-title{ margin:12px 0 6px; font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--ink-2); }
   .media-title span{ color:var(--annotate); }
   .media-library{ display:flex; gap:7px; overflow-x:auto; padding:1px 1px 4px; }
-  .media-item{ flex:0 0 64px; width:64px; height:56px; padding:0; border:1px solid var(--rule); background:var(--card); cursor:grab; overflow:hidden; }
+  .media-item{ flex:0 0 64px; width:64px; height:56px; padding:0; border:1px solid var(--rule); background:var(--card); cursor:pointer; overflow:hidden; }
   .media-item:active{ border-color:var(--annotate); }
   .media-item img{ display:block; width:100%; height:100%; object-fit:cover; }
-  .media-add{ display:flex; gap:6px; margin-top:7px; }
-  .media-add input{ flex:1; min-width:0; font:11px var(--sans); color:var(--ink); background:transparent; border:0; border-bottom:1px solid var(--rule); padding:4px 2px; }
-  .media-add input:focus{ outline:none; border-bottom-color:var(--signal); }
-  .media-add button{ flex:0 0 auto; border:1px solid var(--rule); background:transparent; color:var(--ink-2); padding:4px 8px; font:11px var(--sans); cursor:pointer; }
-  .media-note{ margin:4px 0 0; color:var(--ink-2); font-size:9.5px; line-height:1.45; }
+  .media-note{ margin:5px 0 0; color:var(--ink-2); font-size:9.5px; line-height:1.45; }
 
   .right{
     min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px;
@@ -276,13 +272,9 @@
       <div class="legend">
         <h3>読みとるしるし　<em>／ 引っぱって置ける</em></h3>
         <ul id="legend"></ul>
-        <div class="media-title">写真素材 <span>／ 引っぱって置ける</span></div>
+        <div class="media-title">写真素材 <span>／ タップでプレビューへ</span></div>
         <div class="media-library" id="mediaLibrary" aria-label="写真素材"></div>
-        <form class="media-add" id="mediaAddForm">
-          <input id="photoUrl" type="url" inputmode="url" placeholder="画像URLを追加" aria-label="画像URL">
-          <button type="submit">追加</button>
-        </form>
-        <p class="media-note">UnsplashやPexelsの画像URLを追加できます。利用時は各サービスのクレジット規約に従ってください。</p>
+        <p class="media-note">写真はラフには置かず、完成プレビューへ直接追加します。</p>
       </div>
     </div>
 
@@ -362,6 +354,7 @@ let brushSize = 2.6;
 let selectedParts = new Set();
 let selectedStrokes = new Set();
 let selectGesture = null;
+let previewPhotos = [];
 
 const BRUSH_SIZES = { thin:1.5, medium:2.6, thick:4.6 };
 
@@ -573,18 +566,19 @@ function role(members){
   const wide = box.w/W;
   const upper = (box.y0+box.h/2)/H;
   const closed = has("rect")||has("ellipse");
+  const headingLike = n("hline")>=1 && n("hline")<=2 && wide>0.30 && upper<0.45;
   let r, why;
 
-  if(closed && members.length>=2 && (has("mark")||has("hline")||has("vline"))){
-    r="image"; why="囲み＋中に線";
+  if(headingLike && !closed){
+    r="heading"; why=n("hline")===2 ? "上部の長い横線が2本（1行目・2行目）" : "上部の長い横線";
+  } else if(closed && members.length>=2 && has("mark")){
+    r="image"; why="囲み＋斜めの線";
   } else if(n("hline")>=3){
     r="body"; why="横線が"+n("hline")+"本";
   } else if(has("scribble") && area>0.035){
     r="image"; why="面を塗りつぶす動き";
   } else if(has("scribble")){
     r="decor"; why="小さな塗り";
-  } else if(n("hline")>=1 && n("hline")<=2 && wide>0.30 && upper<0.45){
-    r="heading"; why=n("hline")===2 ? "上部の長い横線が2本（1行目・2行目）" : "上部の長い横線";
   } else if(closed && box.w/Math.max(box.h,1)>2.2 && box.h/H<0.10){
     r="button"; why="横長の囲み";
   } else if(closed && area<0.016){
@@ -650,8 +644,12 @@ function analyze(){
     box:{ x0:p.x, y0:p.y, x1:p.x+p.w, y1:p.y+p.h, w:p.w, h:p.h },
     area:(p.w*p.h)/(W*H)
   }));
+  const preview = previewPhotos.map(p => ({
+    r:"image", imageId:p.imageId, why:"写真素材をプレビューへ追加", src:"写真", n:1, kinds:["photo"], previewOnly:true,
+    box:{x0:p.x*W,y0:p.y*H,x1:(p.x+p.w)*W,y1:(p.y+p.h)*H,w:p.w*W,h:p.h*H}, area:p.w*p.h
+  }));
 
-  blocks = [...derived, ...placed]
+  blocks = [...derived, ...placed, ...preview]
     .sort((a,b) => (a.box.y0-b.box.y0) || (a.box.x0-b.box.x0));
 
   drawAnnotations();
@@ -711,19 +709,6 @@ function renderMediaLibrary(){
 }
 renderMediaLibrary();
 
-document.getElementById("mediaAddForm").addEventListener("submit",e=>{
-  e.preventDefault();
-  const input=document.getElementById("photoUrl");
-  const raw=input.value.trim();
-  try{
-    const url=new URL(raw);
-    if(!["http:","https:"].includes(url.protocol)) throw new Error("protocol");
-    if(PHOTO_ASSETS.some(photo=>photo.src===url.href)) return;
-    PHOTO_ASSETS.push({id:"remote-"+Date.now(),name:url.hostname.replace(/^www\./,""),src:url.href});
-    renderMediaLibrary(); input.value="";
-  }catch(err){ input.focus(); }
-});
-
 let ghost = null;
 
 document.getElementById("legend").addEventListener("pointerdown", e => {
@@ -764,31 +749,11 @@ document.getElementById("legend").addEventListener("pointerdown", e => {
   li.addEventListener("pointerup", up);
 });
 
-mediaLibrary.addEventListener("pointerdown", e => {
+mediaLibrary.addEventListener("click", e => {
   const item=e.target.closest(".media-item"); if(!item) return;
   const photo=PHOTO_ASSETS.find(x=>x.id===item.dataset.photo); if(!photo) return;
-  const rw=PART_SIZE.image[0], rh=PART_SIZE.image[1];
-  item.setPointerCapture(e.pointerId); e.preventDefault();
-  ghost=document.createElement("div"); ghost.className="ghost";
-  ghost.style.width=(W*rw)+"px"; ghost.style.height=(H*rh)+"px";
-  ghost.style.backgroundImage=`url(${photo.src})`; ghost.style.backgroundSize="cover"; ghost.style.backgroundPosition="center";
-  document.body.appendChild(ghost); moveGhost(e);
-  const move=ev=>{ moveGhost(ev); ev.preventDefault(); };
-  const up=ev=>{
-    item.releasePointerCapture(ev.pointerId);
-    item.removeEventListener("pointermove",move); item.removeEventListener("pointerup",up);
-    const s=stage.getBoundingClientRect();
-    const inside=ev.clientX>s.left&&ev.clientX<s.right&&ev.clientY>s.top&&ev.clientY<s.bottom;
-    ghost.remove(); ghost=null;
-    if(inside){
-      const w=W*rw,h=H*rh;
-      parts.push({id:++seq,r:"image",imageId:photo.id,
-        x:Math.max(0,Math.min(W-w,ev.clientX-s.left-w/2)),
-        y:Math.max(0,Math.min(H-h,ev.clientY-s.top-h/2)),w,h});
-      hintEl.style.display="none"; renderParts(); analyze();
-    }
-  };
-  item.addEventListener("pointermove",move); item.addEventListener("pointerup",up);
+  previewPhotos.push({id:++seq,imageId:photo.id,x:.16+(previewPhotos.length%3)*.06,y:.18+(previewPhotos.length%3)*.05,w:.68,h:.30});
+  analyze();
 });
 
 function moveGhost(e){
@@ -878,13 +843,12 @@ const SHEET_W=360, SHEET_H=509;
 function norm(b){ return { x:b.box.x0/W, y:b.box.y0/H, w:b.box.w/W, h:b.box.h/H, r:b.r, imageId:b.imageId||null }; }
 
 function planFaithful(ns, t){
-  const m = 20*t.airy;
   return ns.map(e => ({
     r:e.r,
-    x: m + e.x*(SHEET_W-m*2),
-    y: m + e.y*(SHEET_H-m*2),
-    w: Math.max(24, e.w*(SHEET_W-m*2)),
-    h: Math.max(12, e.h*(SHEET_H-m*2)),
+    x: e.x*SHEET_W,
+    y: e.y*SHEET_H,
+    w: Math.max(10, e.w*SHEET_W),
+    h: Math.max(8, e.h*SHEET_H),
     imageId:e.imageId||null
   }));
 }
@@ -1087,13 +1051,14 @@ document.querySelector(".brushes").addEventListener("click",e=>{
 
 document.getElementById("undo").addEventListener("click", ()=>{
   if(strokes.length) strokes.pop();
-  else parts.pop();
+  else if(parts.length) parts.pop();
+  else previewPhotos.pop();
   selectedParts.clear(); selectedStrokes.clear();
   redraw(); renderParts(); analyze();
   if(!strokes.length && !parts.length) hintEl.style.display="";
 });
 document.getElementById("clear").addEventListener("click", ()=>{
-  strokes=[]; parts=[]; blocks=[];
+  strokes=[]; parts=[]; previewPhotos=[]; blocks=[];
   selectedParts.clear(); selectedStrokes.clear();
   redraw(); annoEl.innerHTML=""; renderParts();
   hintEl.style.display=""; renderAll();
