@@ -84,7 +84,7 @@
   .brushes button[data-size="thick"]::before{ width:13px; height:13px; }
   .brushes button[aria-pressed="true"]{ border-color:var(--signal); background:rgba(168,32,110,.08); }
 
-  .split{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.05fr); min-height:0; }
+  .split{ display:grid; grid-template-columns:minmax(0,.88fr) minmax(0,1.12fr); min-height:0; }
   @media (max-width:900px){
     .split{ grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) minmax(0,1fr); }
   }
@@ -93,7 +93,9 @@
          grid-template-rows:minmax(0,1fr) auto; border-right:1px solid var(--rule); }
 
   .stage{
-    position:relative; min-height:0; background:var(--card);
+    position:relative; min-height:0; width:min(100%, 44vh); max-width:100%; max-height:100%;
+    aspect-ratio:210/297; height:auto; justify-self:center; align-self:center;
+    background:var(--card);
     background-image:
       linear-gradient(to right, rgba(31,78,140,.055) 1px, transparent 1px),
       linear-gradient(to bottom, rgba(31,78,140,.055) 1px, transparent 1px);
@@ -173,10 +175,10 @@
 
   .right{
     min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px;
-    display:grid; grid-template-columns:repeat(auto-fit, minmax(210px,1fr));
+    display:grid; grid-template-columns:1fr;
     gap:14px; align-content:start;
   }
-  .variant{ min-width:0; }
+  .variant{ min-width:0; width:min(100%, 680px); margin:0 auto; }
   .variant header{ display:flex; align-items:baseline; gap:7px; margin-bottom:7px; }
   .variant .no{ font-family:var(--mono); font-size:10px; color:var(--signal); letter-spacing:.1em; }
   .variant .nm{ font-size:12.5px; color:var(--ink); }
@@ -715,7 +717,6 @@ function renderParts(){
   partsLayer.innerHTML = parts.map(p => `
     <div class="part${selectedParts.has(p.id)?" selected":""}" data-id="${p.id}"
          style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px;">
-      <div class="lb">${ROLE_JA[p.r]}</div>
       <svg class="gl" width="44" height="25" viewBox="0 0 44 25"
            style="color:var(--annotate)">${GLYPHS[p.r]}</svg>
       <div class="rm" data-act="rm">×</div>
