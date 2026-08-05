@@ -172,6 +172,12 @@
   .legend li:active{ background:rgba(31,78,140,.09); border-color:var(--annotate); }
   .legend svg{ display:block; }
   .legend span{ font-size:11.5px; color:var(--ink-2); }
+  .media-title{ margin:12px 0 6px; font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--ink-2); }
+  .media-title span{ color:var(--annotate); }
+  .media-library{ display:flex; gap:7px; overflow-x:auto; padding:1px 1px 4px; }
+  .media-item{ flex:0 0 64px; width:64px; height:56px; padding:0; border:1px solid var(--rule); background:var(--card); cursor:grab; overflow:hidden; }
+  .media-item:active{ border-color:var(--annotate); }
+  .media-item img{ display:block; width:100%; height:100%; object-fit:cover; }
 
   .right{
     min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px;
@@ -252,6 +258,8 @@
       <div class="legend">
         <h3>読みとるしるし　<em>／ 引っぱって置ける</em></h3>
         <ul id="legend"></ul>
+        <div class="media-title">写真素材 <span>／ 引っぱって置ける</span></div>
+        <div class="media-library" id="mediaLibrary" aria-label="写真素材"></div>
       </div>
     </div>
 
@@ -615,7 +623,7 @@ function analyze(){
   derived = stitch(derived);
 
   const placed = parts.map(p => ({
-    r:p.r, why:"凡例から置いた", src:"置", n:1, kinds:["part"],
+    r:p.r, imageId:p.imageId||null, why:p.imageId?"写真素材から置いた":"凡例から置いた", src:"置", n:1, kinds:["part"],
     box:{ x0:p.x, y0:p.y, x1:p.x+p.w, y1:p.y+p.h, w:p.w, h:p.h },
     area:(p.w*p.h)/(W*H)
   }));
@@ -662,9 +670,19 @@ const GLYPHS = {
   label:   `<line x1="12" y1="12" x2="32" y2="12" stroke="currentColor" stroke-width="1.6"/>`
 };
 const ORDER = ["heading","body","image","logo","button","label"];
+const PHOTO_ASSETS = [
+  { id:"workshop", name:"つくる手", src:"photo-workshop.png" },
+  { id:"materials", name:"素材と道具", src:"photo-materials.png" },
+  { id:"posters", name:"紙のポスター", src:"photo-posters.png" }
+];
 
 document.getElementById("legend").innerHTML = ORDER.map(r =>
   `<li data-r="${r}"><svg width="44" height="25" viewBox="0 0 44 25" style="color:#16181A">${GLYPHS[r]}</svg><span>${ROLE_JA[r]}</span></li>`
+).join("");
+
+const mediaLibrary=document.getElementById("mediaLibrary");
+mediaLibrary.innerHTML=PHOTO_ASSETS.map(photo=>
+  `<button class="media-item" type="button" data-photo="${photo.id}" aria-label="${photo.name}"><img src="${photo.src}" alt="${photo.name}"></button>`
 ).join("");
 
 let ghost = null;
@@ -705,6 +723,33 @@ document.getElementById("legend").addEventListener("pointerdown", e => {
   };
   li.addEventListener("pointermove", move);
   li.addEventListener("pointerup", up);
+});
+
+mediaLibrary.addEventListener("pointerdown", e => {
+  const item=e.target.closest(".media-item"); if(!item) return;
+  const photo=PHOTO_ASSETS.find(x=>x.id===item.dataset.photo); if(!photo) return;
+  const rw=PART_SIZE.image[0], rh=PART_SIZE.image[1];
+  item.setPointerCapture(e.pointerId); e.preventDefault();
+  ghost=document.createElement("div"); ghost.className="ghost";
+  ghost.style.width=(W*rw)+"px"; ghost.style.height=(H*rh)+"px";
+  ghost.style.backgroundImage=`url(${photo.src})`; ghost.style.backgroundSize="cover"; ghost.style.backgroundPosition="center";
+  document.body.appendChild(ghost); moveGhost(e);
+  const move=ev=>{ moveGhost(ev); ev.preventDefault(); };
+  const up=ev=>{
+    item.releasePointerCapture(ev.pointerId);
+    item.removeEventListener("pointermove",move); item.removeEventListener("pointerup",up);
+    const s=stage.getBoundingClientRect();
+    const inside=ev.clientX>s.left&&ev.clientX<s.right&&ev.clientY>s.top&&ev.clientY<s.bottom;
+    ghost.remove(); ghost=null;
+    if(inside){
+      const w=W*rw,h=H*rh;
+      parts.push({id:++seq,r:"image",imageId:photo.id,
+        x:Math.max(0,Math.min(W-w,ev.clientX-s.left-w/2)),
+        y:Math.max(0,Math.min(H-h,ev.clientY-s.top-h/2)),w,h});
+      hintEl.style.display="none"; renderParts(); analyze();
+    }
+  };
+  item.addEventListener("pointermove",move); item.addEventListener("pointerup",up);
 });
 
 function moveGhost(e){
@@ -791,7 +836,7 @@ partsLayer.addEventListener("pointerdown", e => {
    ========================================================= */
 
 const SHEET_W=360, SHEET_H=509;
-function norm(b){ return { x:b.box.x0/W, y:b.box.y0/H, w:b.box.w/W, h:b.box.h/H, r:b.r }; }
+function norm(b){ return { x:b.box.x0/W, y:b.box.y0/H, w:b.box.w/W, h:b.box.h/H, r:b.r, imageId:b.imageId||null }; }
 
 function planFaithful(ns, t){
   const m = 20*t.airy;
@@ -800,7 +845,8 @@ function planFaithful(ns, t){
     x: m + e.x*(SHEET_W-m*2),
     y: m + e.y*(SHEET_H-m*2),
     w: Math.max(24, e.w*(SHEET_W-m*2)),
-    h: Math.max(12, e.h*(SHEET_H-m*2))
+    h: Math.max(12, e.h*(SHEET_H-m*2)),
+    imageId:e.imageId||null
   }));
 }
 function planStacked(ns, t){
@@ -880,9 +926,13 @@ function paint(e,t){
       return `<div class="e" style="${base}font-family:${t.body};font-size:${fs}px;
         line-height:${t.lead};color:${t.sub};letter-spacing:${t.tracking};">${lines}</div>`;
     }
-    case "image":
+    case "image":{
+      const photo=PHOTO_ASSETS.find(x=>x.id===e.imageId);
+      if(photo) return `<div class="e" style="${base}border-radius:${rad}px;overflow:hidden;background:${t.accent2};">
+        <img src="${photo.src}" alt="" style="display:block;width:100%;height:100%;object-fit:cover;"></div>`;
       return `<div class="e" style="${base}border-radius:${rad}px;background:${t.accent2}55;${motif(t)}
         border:${t.motif==='rule'?`1px solid ${t.accent}`:'0'};"></div>`;
+    }
     case "logo":
       return `<div class="e" style="${base}border-radius:${t.motif==='dots'?'50%':rad+'px'};
         background:${t.accent};display:flex;align-items:center;justify-content:center;color:${t.bg};
