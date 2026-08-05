@@ -1,0 +1,15 @@
+{
+  "name": "rough-sketch-layout-prototype",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^7.0.0"
+  }
+}
