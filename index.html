@@ -1,3 +1,6 @@
+<!doctype html>
+<html lang="ja">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>ラフ → レイアウト 変換ロジック 試作 02</title>
@@ -64,6 +67,23 @@
   }
   .acts button:active{ background:var(--ink); color:var(--card); }
 
+  .tools{ display:flex; align-items:center; gap:4px; }
+  .tools button{
+    font-family:var(--sans); font-size:12px; padding:5px 9px;
+    background:transparent; color:var(--ink-2); border:1px solid var(--rule); cursor:pointer;
+  }
+  .tools button[aria-pressed="true"]{ background:var(--ink); color:var(--card); border-color:var(--ink); }
+  .brushes{ display:flex; align-items:center; gap:3px; }
+  .brushes button{
+    width:26px; height:26px; padding:0; border:1px solid var(--rule); background:transparent;
+    display:grid; place-items:center; cursor:pointer;
+  }
+  .brushes button::before{ content:""; display:block; border-radius:50%; background:var(--ink); }
+  .brushes button[data-size="thin"]::before{ width:4px; height:4px; }
+  .brushes button[data-size="medium"]::before{ width:8px; height:8px; }
+  .brushes button[data-size="thick"]::before{ width:13px; height:13px; }
+  .brushes button[aria-pressed="true"]{ border-color:var(--signal); background:rgba(168,32,110,.08); }
+
   .split{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.05fr); min-height:0; }
   @media (max-width:900px){
     .split{ grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) minmax(0,1fr); }
@@ -96,11 +116,12 @@
   .parts{ position:absolute; inset:0; }
   .part{
     position:absolute;
-    border:1.5px dashed var(--annotate);
-    background:rgba(31,78,140,.055);
+    border:0;
+    background:transparent;
     touch-action:none; cursor:move;
     display:flex; align-items:center; justify-content:center;
   }
+  .part.selected{ outline:1.5px dashed var(--signal); outline-offset:4px; }
   .part .lb{
     position:absolute; left:-1.5px; top:-1.5px;
     font-family:var(--mono); font-size:9.5px; letter-spacing:.06em;
@@ -113,11 +134,16 @@
     border-radius:11px; background:var(--signal); color:#fff;
     font-size:13px; line-height:22px; text-align:center; cursor:pointer;
   }
+  .part:not(.selected) .rm, .part:not(.selected) .rz{ display:none; }
   .part .rz{
     position:absolute; right:-8px; bottom:-8px; width:18px; height:18px;
     background:var(--annotate); cursor:nwse-resize;
     clip-path:polygon(100% 0,100% 100%,0 100%);
   }
+  .parts.pen-mode{ pointer-events:none; }
+  .parts.select-mode{ pointer-events:auto; }
+  .select-box{ position:absolute; border:1px dashed var(--signal); background:rgba(168,32,110,.06); pointer-events:none; }
+  .lasso{ position:fixed; z-index:60; border:1px dashed var(--signal); background:rgba(168,32,110,.08); pointer-events:none; }
 
   .ghost{
     position:fixed; pointer-events:none; z-index:50;
@@ -192,6 +218,15 @@
     </div>
     <div class="tones" id="tones" role="group" aria-label="トーン"></div>
     <div class="spacer"></div>
+    <div class="tools" aria-label="編集モード">
+      <button id="penMode" type="button" aria-pressed="true">描く</button>
+      <button id="selectMode" type="button" aria-pressed="false">選択</button>
+    </div>
+    <div class="brushes" aria-label="ペンの太さ">
+      <button type="button" data-size="thin" aria-label="細いペン" aria-pressed="false"></button>
+      <button type="button" data-size="medium" aria-label="中くらいのペン" aria-pressed="true"></button>
+      <button type="button" data-size="thick" aria-label="太いペン" aria-pressed="false"></button>
+    </div>
     <div class="acts">
       <button id="undo" type="button">1本もどす</button>
       <button id="clear" type="button">全部消す</button>
@@ -203,7 +238,7 @@
       <div class="stage" id="stage">
         <canvas id="ink"></canvas>
         <div class="anno" id="anno"></div>
-        <div class="parts" id="partsLayer"></div>
+        <div class="parts pen-mode" id="partsLayer"></div>
         <div class="hint" id="hint">
           <span class="k">描く　または　置く</span>
           キャンバスに直接描くと、線から役割を推し量ります。<br>
@@ -289,6 +324,13 @@ let current = null;
 let penSeen = false;
 let W = 0, H = 0;
 let seq = 0;
+let mode = "pen";
+let brushSize = 2.6;
+let selectedParts = new Set();
+let selectedStrokes = new Set();
+let selectGesture = null;
+
+const BRUSH_SIZES = { thin:1.5, medium:2.6, thick:4.6 };
 
 function fitCanvas(){
   const r = stage.getBoundingClientRect();
@@ -307,6 +349,10 @@ function pos(e){
 }
 
 canvas.addEventListener("pointerdown", e => {
+  if(mode === "select"){
+    beginSelectionGesture(e);
+    return;
+  }
   if (e.pointerType === "pen") penSeen = true;
   if (e.pointerType === "touch" && penSeen) return;
   canvas.setPointerCapture(e.pointerId);
@@ -338,11 +384,82 @@ function drawStroke(s, from){
   for (let i=Math.max(1,from|0); i<s.pts.length; i++){
     const a=s.pts[i-1], b=s.pts[i];
     ctx.beginPath();
-    ctx.lineWidth = 1.4 + b.p*5.2;
+    ctx.lineWidth = brushSize;
     ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
   }
 }
 function redraw(){ ctx.clearRect(0,0,W,H); for(const s of strokes) drawStroke(s,1); }
+
+function rectForStroke(s){
+  const xs=s.pts.map(p=>p.x), ys=s.pts.map(p=>p.y);
+  const x0=Math.min(...xs), y0=Math.min(...ys), x1=Math.max(...xs), y1=Math.max(...ys);
+  return {x0,y0,x1,y1,w:x1-x0,h:y1-y0};
+}
+
+function selectionBounds(){
+  const rs=[];
+  selectedParts.forEach(id=>{ const p=parts.find(x=>x.id===id); if(p) rs.push({x0:p.x,y0:p.y,x1:p.x+p.w,y1:p.y+p.h}); });
+  selectedStrokes.forEach(i=>{ if(strokes[i]) rs.push(rectForStroke(strokes[i])); });
+  if(!rs.length) return null;
+  return {x0:Math.min(...rs.map(r=>r.x0)),y0:Math.min(...rs.map(r=>r.y0)),
+    x1:Math.max(...rs.map(r=>r.x1)),y1:Math.max(...rs.map(r=>r.y1))};
+}
+
+function rectContains(r,x,y){ return x>=r.x0 && x<=r.x1 && y>=r.y0 && y<=r.y1; }
+
+function moveSelection(dx,dy){
+  selectedParts.forEach(id=>{
+    const p=parts.find(x=>x.id===id); if(!p) return;
+    p.x=Math.max(0,Math.min(W-p.w,p.x+dx)); p.y=Math.max(0,Math.min(H-p.h,p.y+dy));
+  });
+  selectedStrokes.forEach(i=>{
+    const s=strokes[i]; if(!s) return;
+    s.pts.forEach(p=>{ p.x+=dx; p.y+=dy; });
+  });
+  redraw(); renderParts(); analyze();
+}
+
+function finishSelection(){
+  if(!selectGesture) return;
+  const g=selectGesture;
+  if(g.kind === "move"){
+    moveSelection(g.lastX-g.x,g.lastY-g.y);
+  } else {
+    const x0=Math.min(g.x,g.lastX), y0=Math.min(g.y,g.lastY);
+    const x1=Math.max(g.x,g.lastX), y1=Math.max(g.y,g.lastY);
+    const box={x0,y0,x1,y1};
+    selectedParts=new Set(parts.filter(p=>rectContains(box,p.x+p.w/2,p.y+p.h/2)).map(p=>p.id));
+    selectedStrokes=new Set(strokes.map((s,i)=>rectContains(box,...(() => { const r=rectForStroke(s); return [(r.x0+r.x1)/2,(r.y0+r.y1)/2]; })()) ? i : -1).filter(i=>i>=0));
+  }
+  selectGesture=null; document.querySelector(".lasso")?.remove();
+  renderParts(); drawAnnotations();
+}
+
+function beginSelectionGesture(e){
+  const r=canvas.getBoundingClientRect();
+  const x=e.clientX-r.left, y=e.clientY-r.top;
+  const sb=selectionBounds();
+  const moving=sb && rectContains(sb,x,y);
+  selectGesture={kind:moving?"move":"lasso",x,y,lastX:x,lastY:y};
+  if(!moving){
+    const l=document.createElement("div"); l.className="lasso"; l.dataset.lasso="true";
+    document.body.appendChild(l);
+  }
+  canvas.setPointerCapture(e.pointerId); e.preventDefault();
+}
+
+canvas.addEventListener("pointermove", e => {
+  if(mode !== "select" || !selectGesture) return;
+  const r=canvas.getBoundingClientRect();
+  selectGesture.lastX=e.clientX-r.left; selectGesture.lastY=e.clientY-r.top;
+  if(selectGesture.kind === "lasso"){
+    const l=document.querySelector(".lasso"), x0=Math.min(selectGesture.x,e.clientX), y0=Math.min(selectGesture.y,e.clientY);
+    if(l){ l.style.left=x0+"px"; l.style.top=y0+"px"; l.style.width=Math.abs(e.clientX-selectGesture.x)+"px"; l.style.height=Math.abs(e.clientY-selectGesture.y)+"px"; }
+  }
+  e.preventDefault();
+});
+canvas.addEventListener("pointerup", e => { if(mode === "select") finishSelection(); });
+canvas.addEventListener("pointercancel", e => { if(mode === "select") finishSelection(); });
 
 /* =========================================================
    2. ストローク → プリミティブ
@@ -509,13 +626,20 @@ function analyze(){
 }
 
 function drawAnnotations(){
-  annoEl.innerHTML = blocks.filter(b=>b.src==="描").map(b=>{
+  const inferred=blocks.filter(b=>b.src==="描").map(b=>{
     const pad=7;
     const st=`left:${b.box.x0-pad}px;top:${b.box.y0-pad}px;`+
              `width:${b.box.w+pad*2}px;height:${b.box.h+pad*2}px;`;
     return `<div class="box" style="${st}"></div>`+
            `<div class="tag" style="left:${b.box.x0-pad}px;top:${b.box.y0-pad-2}px;">${ROLE_JA[b.r]}</div>`;
   }).join("");
+  const selected=[...selectedParts].map(id=>parts.find(p=>p.id===id)).filter(Boolean).map(p=>
+    `<div class="select-box" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px;"></div>`).join("");
+  const selectedLines=[...selectedStrokes].map(i=>strokes[i]).filter(Boolean).map(s=>{
+    const b=rectForStroke(s);
+    return `<div class="select-box" style="left:${b.x0-5}px;top:${b.y0-5}px;width:${b.w+10}px;height:${b.h+10}px;"></div>`;
+  }).join("");
+  annoEl.innerHTML=inferred+selected+selectedLines;
 }
 
 /* =========================================================
@@ -589,7 +713,7 @@ function moveGhost(e){
 
 function renderParts(){
   partsLayer.innerHTML = parts.map(p => `
-    <div class="part" data-id="${p.id}"
+    <div class="part${selectedParts.has(p.id)?" selected":""}" data-id="${p.id}"
          style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px;">
       <div class="lb">${ROLE_JA[p.r]}</div>
       <svg class="gl" width="44" height="25" viewBox="0 0 44 25"
@@ -606,6 +730,12 @@ partsLayer.addEventListener("pointerdown", e => {
   const act = e.target.dataset.act;
   e.preventDefault(); e.stopPropagation();
 
+  if(!selectedParts.has(id)){
+    selectedParts=new Set([id]);
+    selectedStrokes.clear();
+    el.classList.add("selected");
+  }
+
   if(act === "rm"){
     parts = parts.filter(x => x.id !== id);
     renderParts(); analyze();
@@ -617,17 +747,32 @@ partsLayer.addEventListener("pointerdown", e => {
   const s = stage.getBoundingClientRect();
   const ox = e.clientX - s.left - p.x;
   const oy = e.clientY - s.top  - p.y;
+  let lastX=e.clientX, lastY=e.clientY;
 
   const move = ev => {
     if(act === "rz"){
       p.w = Math.max(26, Math.min(W - p.x, ev.clientX - s.left - p.x));
       p.h = Math.max(18, Math.min(H - p.y, ev.clientY - s.top  - p.y));
     } else {
-      p.x = Math.max(0, Math.min(W - p.w, ev.clientX - s.left - ox));
-      p.y = Math.max(0, Math.min(H - p.h, ev.clientY - s.top  - oy));
+      if(selectedParts.size>1){
+        const dx=ev.clientX-lastX, dy=ev.clientY-lastY;
+        selectedParts.forEach(sid=>{
+          const sp=parts.find(x=>x.id===sid); if(!sp) return;
+          sp.x=Math.max(0,Math.min(W-sp.w,sp.x+dx));
+          sp.y=Math.max(0,Math.min(H-sp.h,sp.y+dy));
+        });
+      } else {
+        p.x = Math.max(0, Math.min(W - p.w, ev.clientX - s.left - ox));
+        p.y = Math.max(0, Math.min(H - p.h, ev.clientY - s.top  - oy));
+      }
+      lastX=ev.clientX; lastY=ev.clientY;
     }
-    el.style.left=p.x+"px"; el.style.top=p.y+"px";
-    el.style.width=p.w+"px"; el.style.height=p.h+"px";
+    parts.forEach(sp=>{
+      const node=partsLayer.querySelector(`[data-id="${sp.id}"]`);
+      if(!node) return;
+      node.style.left=sp.x+"px"; node.style.top=sp.y+"px";
+      node.style.width=sp.w+"px"; node.style.height=sp.h+"px";
+    });
     ev.preventDefault();
   };
   const up = ev => {
@@ -771,13 +916,12 @@ function renderAll(){
     return;
   }
   const ns=blocks.map(norm);
-  right.innerHTML = PLANS.map(p=>{
-    const els=p.fn(ns,t).map(e=>paint(e,t)).join("");
-    return `<div class="variant">
-      <header><span class="no">${p.no}</span><span class="nm">${p.nm}</span></header>
-      <div class="frame"><div class="sheet" style="background:${t.bg};">${els}</div></div>
-      <div class="desc">${p.desc}</div></div>`;
-  }).join("") + readout();
+  const p=PLANS[0];
+  const els=p.fn(ns,t).map(e=>paint(e,t)).join("");
+  right.innerHTML = `<div class="variant">
+    <header><span class="no">PREVIEW</span><span class="nm">現在のレイアウト</span></header>
+    <div class="frame"><div class="sheet" style="background:${t.bg};">${els}</div></div>
+    <div class="desc">左側の配置をそのまま反映しています。トーンは完成形の見た目だけを変えます。</div></div>` + readout();
   scaleSheets();
 }
 
@@ -817,14 +961,38 @@ tonesEl.addEventListener("click", e=>{
 document.getElementById("hd").addEventListener("input", renderAll);
 document.getElementById("kw").addEventListener("input", renderAll);
 
+const penModeEl=document.getElementById("penMode");
+const selectModeEl=document.getElementById("selectMode");
+function setMode(next){
+  mode=next;
+  penModeEl.setAttribute("aria-pressed",String(mode==="pen"));
+  selectModeEl.setAttribute("aria-pressed",String(mode==="select"));
+  partsLayer.classList.toggle("pen-mode",mode==="pen");
+  partsLayer.classList.toggle("select-mode",mode==="select");
+  if(mode==="pen"){
+    selectedParts.clear(); selectedStrokes.clear();
+  }
+  renderParts(); drawAnnotations();
+}
+penModeEl.addEventListener("click",()=>setMode("pen"));
+selectModeEl.addEventListener("click",()=>setMode("select"));
+
+document.querySelector(".brushes").addEventListener("click",e=>{
+  const b=e.target.closest("button[data-size]"); if(!b) return;
+  brushSize=BRUSH_SIZES[b.dataset.size];
+  document.querySelectorAll(".brushes button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+});
+
 document.getElementById("undo").addEventListener("click", ()=>{
   if(strokes.length) strokes.pop();
   else parts.pop();
+  selectedParts.clear(); selectedStrokes.clear();
   redraw(); renderParts(); analyze();
   if(!strokes.length && !parts.length) hintEl.style.display="";
 });
 document.getElementById("clear").addEventListener("click", ()=>{
   strokes=[]; parts=[]; blocks=[];
+  selectedParts.clear(); selectedStrokes.clear();
   redraw(); annoEl.innerHTML=""; renderParts();
   hintEl.style.display=""; renderAll();
 });
