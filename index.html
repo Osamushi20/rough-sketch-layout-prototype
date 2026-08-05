@@ -135,7 +135,8 @@
     touch-action:none; cursor:move;
     display:flex; align-items:center; justify-content:center;
   }
-  .part.selected{ outline:1.5px dashed var(--signal); outline-offset:4px; }
+  /* 操作領域はパーツ全体に残し、見た目の選択枠は実体だけに合わせる */
+  .part.selected{ outline:0; }
   .part .lb{
     position:absolute; left:-1.5px; top:-1.5px;
     font-family:var(--mono); font-size:9.5px; letter-spacing:.06em;
@@ -459,6 +460,13 @@ function rectForStroke(s){
   return {x0,y0,x1,y1,w:x1-x0,h:y1-y0};
 }
 
+function visualBoundsForPart(p){
+  const ratio=44/25;
+  const w=Math.min(44, p.w*.70, p.h*.70*ratio);
+  const h=w/ratio;
+  return {x0:p.x+(p.w-w)/2, y0:p.y+(p.h-h)/2, x1:p.x+(p.w+w)/2, y1:p.y+(p.h+h)/2, w, h};
+}
+
 function eraseAt(x,y){
   const hit=strokes.findIndex(s=>{
     const b=rectForStroke(s), pad=Math.max(10,brushSize*3);
@@ -470,7 +478,7 @@ function eraseAt(x,y){
 
 function selectionBounds(){
   const rs=[];
-  selectedParts.forEach(id=>{ const p=parts.find(x=>x.id===id); if(p) rs.push({x0:p.x,y0:p.y,x1:p.x+p.w,y1:p.y+p.h}); });
+  selectedParts.forEach(id=>{ const p=parts.find(x=>x.id===id); if(p) rs.push(visualBoundsForPart(p)); });
   selectedStrokes.forEach(i=>{ if(strokes[i]) rs.push(rectForStroke(strokes[i])); });
   if(!rs.length) return null;
   return {x0:Math.min(...rs.map(r=>r.x0)),y0:Math.min(...rs.map(r=>r.y0)),
@@ -612,13 +620,19 @@ function role(members){
   const wide = box.w/W;
   const upper = (box.y0+box.h/2)/H;
   const closed = has("rect")||has("ellipse");
+  const frames = members.filter(m=>m.k==="rect"||m.k==="ellipse");
+  const markInside = frames.some(frame=>members.some(m=>m.k==="mark" &&
+    m.m.x0>=frame.m.x0-frame.m.w*.12 && m.m.x1<=frame.m.x1+frame.m.w*.12 &&
+    m.m.y0>=frame.m.y0-frame.m.h*.12 && m.m.y1<=frame.m.y1+frame.m.h*.12));
   const headingLike = n("hline")>=1 && n("hline")<=2 && wide>0.30 && upper<0.45;
   let r, why;
 
-  if(headingLike && !closed){
+  /* 画像は「囲みの内側に印」がある場合だけ。横線の近くの短い線が
+     mark 扱いになっても、画像へ昇格しないようにする。 */
+  if(closed && markInside && area>0.02){
+    r="image"; why="囲みの内側に斜めの線";
+  } else if(headingLike){
     r="heading"; why=n("hline")===2 ? "上部の長い横線が2本（1行目・2行目）" : "上部の長い横線";
-  } else if(closed && members.length>=2 && has("mark")){
-    r="image"; why="囲み＋斜めの線";
   } else if(n("hline")>=3){
     r="body"; why="横線が"+n("hline")+"本";
   } else if(has("scribble") && area>0.035){
@@ -629,7 +643,7 @@ function role(members){
     r="button"; why="横長の囲み";
   } else if(closed && area<0.016){
     r="logo"; why="小さな囲み";
-  } else if(closed){
+  } else if(closed && area>0.02){
     r="image"; why="大きな囲み";
   } else if(n("hline")>=1){
     r="label"; why="短い横線";
@@ -676,6 +690,8 @@ function stitch(list){
 }
 
 let blocks = [];
+let analyzeTimer = null;
+const RECOGNITION_SETTLE_MS = 180;
 
 function analyze(){
   const items = strokes.map(s => { const m=measure(s); return { m, k:primitive(m) }; });
@@ -695,11 +711,17 @@ function analyze(){
     box:{x0:p.x*W,y0:p.y*H,x1:(p.x+p.w)*W,y1:(p.y+p.h)*H,w:p.w*W,h:p.h*H}, area:p.w*p.h
   }));
 
-  blocks = [...derived, ...placed, ...preview]
+  const nextBlocks = [...derived, ...placed, ...preview]
     .sort((a,b) => (a.box.y0-b.box.y0) || (a.box.x0-b.box.x0));
 
-  drawAnnotations();
-  renderAll();
+  /* 描き終わった直後に一瞬だけ揺れる判定を確定させず、
+     手が止まってからプレビューへ反映する。入力そのものは止めない。 */
+  clearTimeout(analyzeTimer);
+  analyzeTimer = setTimeout(() => {
+    blocks = nextBlocks;
+    drawAnnotations();
+    renderAll();
+  }, RECOGNITION_SETTLE_MS);
 }
 
 function drawAnnotations(){
@@ -711,7 +733,7 @@ function drawAnnotations(){
            `<div class="tag" style="left:${b.box.x0-pad}px;top:${b.box.y0-pad-2}px;">${ROLE_JA[b.r]}</div>`;
   }).join("");
   const selected=[...selectedParts].map(id=>parts.find(p=>p.id===id)).filter(Boolean).map(p=>
-    `<div class="select-box" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px;"></div>`).join("");
+    (()=>{ const b=visualBoundsForPart(p); return `<div class="select-box" style="left:${b.x0-5}px;top:${b.y0-5}px;width:${b.w+10}px;height:${b.h+10}px;"></div>`; })()).join("");
   const selectedLines=[...selectedStrokes].map(i=>strokes[i]).filter(Boolean).map(s=>{
     const b=rectForStroke(s);
     return `<div class="select-box" style="left:${b.x0-5}px;top:${b.y0-5}px;width:${b.w+10}px;height:${b.h+10}px;"></div>`;
