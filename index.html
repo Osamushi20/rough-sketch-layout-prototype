@@ -57,6 +57,13 @@
   }
   .tones button:last-child{ border-right:0; }
   .tones button[aria-pressed="true"]{ background:var(--signal); color:#fff; }
+  .layout-toggle{ display:flex; border:1px solid var(--rule); }
+  .layout-toggle button{
+    font-family:var(--sans); font-size:11.5px; padding:5px 8px;
+    background:transparent; color:var(--ink-2); border:0; border-right:1px solid var(--rule); cursor:pointer;
+  }
+  .layout-toggle button:last-child{ border-right:0; }
+  .layout-toggle button[aria-pressed="true"]{ background:var(--annotate); color:#fff; }
 
   .spacer{ flex:1 1 auto; }
   .acts{ display:flex; gap:6px; }
@@ -85,6 +92,8 @@
   .brushes button[aria-pressed="true"]{ border-color:var(--signal); background:rgba(168,32,110,.08); }
 
   .split{ display:grid; grid-template-columns:minmax(0,.88fr) minmax(0,1.12fr); min-height:0; }
+  .split.right-first .left{ order:2; border-right:0; border-left:1px solid var(--rule); }
+  .split.right-first .right{ order:1; }
   @media (max-width:900px){
     .split{ grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) minmax(0,1fr); }
   }
@@ -178,6 +187,11 @@
   .media-item{ flex:0 0 64px; width:64px; height:56px; padding:0; border:1px solid var(--rule); background:var(--card); cursor:grab; overflow:hidden; }
   .media-item:active{ border-color:var(--annotate); }
   .media-item img{ display:block; width:100%; height:100%; object-fit:cover; }
+  .media-add{ display:flex; gap:6px; margin-top:7px; }
+  .media-add input{ flex:1; min-width:0; font:11px var(--sans); color:var(--ink); background:transparent; border:0; border-bottom:1px solid var(--rule); padding:4px 2px; }
+  .media-add input:focus{ outline:none; border-bottom-color:var(--signal); }
+  .media-add button{ flex:0 0 auto; border:1px solid var(--rule); background:transparent; color:var(--ink-2); padding:4px 8px; font:11px var(--sans); cursor:pointer; }
+  .media-note{ margin:4px 0 0; color:var(--ink-2); font-size:9.5px; line-height:1.45; }
 
   .right{
     min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px;
@@ -190,7 +204,7 @@
   .variant .nm{ font-size:12.5px; color:var(--ink); }
   .variant .desc{ font-size:10.5px; color:var(--ink-2); margin-top:5px; line-height:1.6; }
   .frame{
-    position:relative; width:100%; aspect-ratio:360 / 509; overflow:hidden;
+    position:relative; height:min(calc(100vh - 155px), 100%); width:auto; max-width:100%; aspect-ratio:360 / 509; overflow:hidden;
     background:var(--card);
     box-shadow:0 1px 0 rgba(0,0,0,.14), 0 6px 18px rgba(0,0,0,.07);
   }
@@ -225,6 +239,10 @@
       <input id="kw" class="narrow" value="手を動かす" autocomplete="off" spellcheck="false">
     </div>
     <div class="tones" id="tones" role="group" aria-label="トーン"></div>
+    <div class="layout-toggle" role="group" aria-label="ラフとプレビューの位置">
+      <button id="roughLeft" type="button" aria-pressed="true">ラフ 左</button>
+      <button id="roughRight" type="button" aria-pressed="false">ラフ 右</button>
+    </div>
     <div class="spacer"></div>
     <div class="tools" aria-label="編集モード">
       <button id="penMode" type="button" aria-pressed="true">描く</button>
@@ -260,6 +278,11 @@
         <ul id="legend"></ul>
         <div class="media-title">写真素材 <span>／ 引っぱって置ける</span></div>
         <div class="media-library" id="mediaLibrary" aria-label="写真素材"></div>
+        <form class="media-add" id="mediaAddForm">
+          <input id="photoUrl" type="url" inputmode="url" placeholder="画像URLを追加" aria-label="画像URL">
+          <button type="submit">追加</button>
+        </form>
+        <p class="media-note">UnsplashやPexelsの画像URLを追加できます。利用時は各サービスのクレジット規約に従ってください。</p>
       </div>
     </div>
 
@@ -681,9 +704,25 @@ document.getElementById("legend").innerHTML = ORDER.map(r =>
 ).join("");
 
 const mediaLibrary=document.getElementById("mediaLibrary");
-mediaLibrary.innerHTML=PHOTO_ASSETS.map(photo=>
-  `<button class="media-item" type="button" data-photo="${photo.id}" aria-label="${photo.name}"><img src="${photo.src}" alt="${photo.name}"></button>`
-).join("");
+function renderMediaLibrary(){
+  mediaLibrary.innerHTML=PHOTO_ASSETS.map(photo=>
+    `<button class="media-item" type="button" data-photo="${esc(photo.id)}" aria-label="${esc(photo.name)}"><img src="${esc(photo.src)}" alt="${esc(photo.name)}"></button>`
+  ).join("");
+}
+renderMediaLibrary();
+
+document.getElementById("mediaAddForm").addEventListener("submit",e=>{
+  e.preventDefault();
+  const input=document.getElementById("photoUrl");
+  const raw=input.value.trim();
+  try{
+    const url=new URL(raw);
+    if(!["http:","https:"].includes(url.protocol)) throw new Error("protocol");
+    if(PHOTO_ASSETS.some(photo=>photo.src===url.href)) return;
+    PHOTO_ASSETS.push({id:"remote-"+Date.now(),name:url.hostname.replace(/^www\./,""),src:url.href});
+    renderMediaLibrary(); input.value="";
+  }catch(err){ input.focus(); }
+});
 
 let ghost = null;
 
@@ -929,7 +968,7 @@ function paint(e,t){
     case "image":{
       const photo=PHOTO_ASSETS.find(x=>x.id===e.imageId);
       if(photo) return `<div class="e" style="${base}border-radius:${rad}px;overflow:hidden;background:${t.accent2};">
-        <img src="${photo.src}" alt="" style="display:block;width:100%;height:100%;object-fit:cover;"></div>`;
+        <img src="${esc(photo.src)}" alt="" style="display:block;width:100%;height:100%;object-fit:cover;"></div>`;
       return `<div class="e" style="${base}border-radius:${rad}px;background:${t.accent2}55;${motif(t)}
         border:${t.motif==='rule'?`1px solid ${t.accent}`:'0'};"></div>`;
     }
@@ -1008,6 +1047,18 @@ tonesEl.addEventListener("click", e=>{
   [...tonesEl.children].forEach(x=>x.setAttribute("aria-pressed", x===b));
   renderAll();
 });
+
+const splitEl=document.querySelector(".split");
+const roughLeftEl=document.getElementById("roughLeft");
+const roughRightEl=document.getElementById("roughRight");
+function setRoughSide(side){
+  splitEl.classList.toggle("right-first",side==="right");
+  roughLeftEl.setAttribute("aria-pressed",String(side==="left"));
+  roughRightEl.setAttribute("aria-pressed",String(side==="right"));
+  requestAnimationFrame(scaleSheets);
+}
+roughLeftEl.addEventListener("click",()=>setRoughSide("left"));
+roughRightEl.addEventListener("click",()=>setRoughSide("right"));
 
 document.getElementById("hd").addEventListener("input", renderAll);
 document.getElementById("kw").addEventListener("input", renderAll);
