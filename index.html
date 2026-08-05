@@ -16,11 +16,12 @@
     --signal:#A8206E;
     --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, monospace;
     --sans: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    --shadow:0 10px 30px rgba(22,24,26,.08);
   }
   *{ box-sizing:border-box; }
   html,body{
     margin:0; padding:0; height:100%;
-    background:var(--paper); color:var(--ink);
+    background:#eef0ed; color:var(--ink);
     font-family:var(--sans);
     -webkit-text-size-adjust:100%;
     overscroll-behavior:none;
@@ -32,7 +33,8 @@
 
   .topbar{
     display:flex; flex-wrap:wrap; align-items:center; gap:14px;
-    padding:9px 14px; background:var(--card); border-bottom:1px solid var(--rule);
+    padding:10px 14px; background:rgba(250,250,248,.94); border-bottom:1px solid var(--rule);
+    box-shadow:0 2px 12px rgba(22,24,26,.05); z-index:5;
   }
   .brand{ font-family:var(--mono); font-size:10px; letter-spacing:.14em;
           color:var(--ink-2); text-transform:uppercase; white-space:nowrap; }
@@ -80,6 +82,7 @@
     background:transparent; color:var(--ink-2); border:1px solid var(--rule); cursor:pointer;
   }
   .tools button[aria-pressed="true"]{ background:var(--ink); color:var(--card); border-color:var(--ink); }
+  .tools button[data-mode="eraser"]{ min-width:34px; padding:5px 8px; }
   .brushes{ display:flex; align-items:center; gap:3px; }
   .brushes button{
     width:26px; height:26px; padding:0; border:1px solid var(--rule); background:transparent;
@@ -168,9 +171,13 @@
   .hint .k{ font-family:var(--mono); font-size:11px; letter-spacing:.1em;
             display:block; margin-bottom:10px; }
 
-  .legend{ border-top:1px solid var(--rule); background:var(--card); padding:9px 12px 11px; }
-  .legend h3{ margin:0 0 8px; font-family:var(--mono); font-size:10px;
+  .legend{ border-top:1px solid var(--rule); background:var(--card); padding:8px 12px 10px; box-shadow:0 -4px 14px rgba(22,24,26,.04); }
+  .legend h3{ margin:0; font-family:var(--mono); font-size:10px;
               letter-spacing:.14em; color:var(--ink-2); font-weight:500; }
+  .legend-toggle{ display:flex; align-items:center; justify-content:space-between; width:100%; padding:4px 0 5px; border:0; background:transparent; color:inherit; cursor:pointer; text-align:left; }
+  .legend-toggle .chevron{ font-size:16px; line-height:1; color:var(--annotate); transition:transform .18s ease; }
+  .legend-toggle[aria-expanded="false"] .chevron{ transform:rotate(-90deg); }
+  .legend-body[hidden]{ display:none; }
   .legend h3 em{ font-style:normal; color:var(--annotate); }
   .legend ul{ display:flex; flex-wrap:wrap; gap:6px 8px; margin:0; padding:0; list-style:none; }
   .legend li{
@@ -190,7 +197,7 @@
   .media-note{ margin:5px 0 0; color:var(--ink-2); font-size:9.5px; line-height:1.45; }
 
   .right{
-    min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px;
+    min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:clamp(10px,2vw,20px);
     display:grid; grid-template-columns:1fr;
     gap:14px; align-content:start;
   }
@@ -200,9 +207,9 @@
   .variant .nm{ font-size:12.5px; color:var(--ink); }
   .variant .desc{ font-size:10.5px; color:var(--ink-2); margin-top:5px; line-height:1.6; }
   .frame{
-    position:relative; height:min(calc(100vh - 155px), 100%); width:auto; max-width:100%; aspect-ratio:360 / 509; overflow:hidden;
+    position:relative; height:min(78dvh, calc(100dvh - 190px)); min-height:180px; width:auto; max-width:100%; aspect-ratio:360 / 509; overflow:hidden;
     background:var(--card);
-    box-shadow:0 1px 0 rgba(0,0,0,.14), 0 6px 18px rgba(0,0,0,.07);
+    box-shadow:var(--shadow);
   }
   .sheet{ position:absolute; top:0; left:0; width:360px; height:509px;
           transform-origin:top left; overflow:hidden; }
@@ -236,13 +243,14 @@
     </div>
     <div class="tones" id="tones" role="group" aria-label="トーン"></div>
     <div class="layout-toggle" role="group" aria-label="ラフとプレビューの位置">
-      <button id="roughLeft" type="button" aria-pressed="true">ラフ 左</button>
-      <button id="roughRight" type="button" aria-pressed="false">ラフ 右</button>
+      <button id="roughLeft" type="button" aria-pressed="false">ラフ 左</button>
+      <button id="roughRight" type="button" aria-pressed="true">ラフ 右</button>
     </div>
     <div class="spacer"></div>
     <div class="tools" aria-label="編集モード">
       <button id="penMode" type="button" aria-pressed="true">描く</button>
       <button id="selectMode" type="button" aria-pressed="false">選択</button>
+      <button id="eraserMode" type="button" data-mode="eraser" aria-label="消しゴム" title="消しゴム" aria-pressed="false">⌫</button>
     </div>
     <div class="brushes" aria-label="ペンの太さ">
       <button type="button" data-size="thin" aria-label="細いペン" aria-pressed="false"></button>
@@ -250,8 +258,8 @@
       <button type="button" data-size="thick" aria-label="太いペン" aria-pressed="false"></button>
     </div>
     <div class="acts">
-      <button id="undo" type="button">1本もどす</button>
-      <button id="clear" type="button">全部消す</button>
+      <button id="undo" type="button" aria-label="戻る" title="戻る">←</button>
+      <button id="redo" type="button" aria-label="進む" title="進む">→</button>
     </div>
   </div>
 
@@ -270,11 +278,15 @@
       </div>
 
       <div class="legend">
-        <h3>読みとるしるし　<em>／ 引っぱって置ける</em></h3>
-        <ul id="legend"></ul>
-        <div class="media-title">写真素材 <span>／ タップでプレビューへ</span></div>
-        <div class="media-library" id="mediaLibrary" aria-label="写真素材"></div>
-        <p class="media-note">写真はラフには置かず、完成プレビューへ直接追加します。</p>
+        <button class="legend-toggle" id="legendToggle" type="button" aria-expanded="false">
+          <h3>読みとるしるし　<em>／ 引っぱって置ける</em></h3><span class="chevron">⌄</span>
+        </button>
+        <div class="legend-body" id="legendBody" hidden>
+          <ul id="legend"></ul>
+          <div class="media-title">写真素材 <span>／ タップでプレビューへ</span></div>
+          <div class="media-library" id="mediaLibrary" aria-label="写真素材"></div>
+          <p class="media-note">写真はラフには置かず、完成プレビューへ直接追加します。</p>
+        </div>
       </div>
     </div>
 
@@ -355,8 +367,26 @@ let selectedParts = new Set();
 let selectedStrokes = new Set();
 let selectGesture = null;
 let previewPhotos = [];
+let history = [];
+let historyIndex = -1;
 
 const BRUSH_SIZES = { thin:1.5, medium:2.6, thick:4.6 };
+
+function snapshot(){ return JSON.stringify({strokes,parts,previewPhotos,seq}); }
+function commitHistory(){
+  const next=snapshot();
+  if(history[historyIndex]===next) return;
+  history=history.slice(0,historyIndex+1);
+  history.push(next); historyIndex=history.length-1;
+}
+function restoreHistory(index){
+  if(index<0 || index>=history.length) return;
+  const s=JSON.parse(history[index]);
+  strokes=s.strokes||[]; parts=s.parts||[]; previewPhotos=s.previewPhotos||[]; seq=s.seq||0;
+  selectedParts.clear(); selectedStrokes.clear(); current=null;
+  redraw(); renderParts(); analyze();
+  hintEl.style.display=strokes.length||parts.length||previewPhotos.length?"none":"";
+}
 
 function fitCanvas(){
   const r = stage.getBoundingClientRect();
@@ -375,6 +405,9 @@ function pos(e){
 }
 
 canvas.addEventListener("pointerdown", e => {
+  if(mode === "eraser"){
+    const q=pos(e); canvas.setPointerCapture(e.pointerId); eraseAt(q.x,q.y); e.preventDefault(); return;
+  }
   if(mode === "select"){
     beginSelectionGesture(e);
     return;
@@ -388,6 +421,9 @@ canvas.addEventListener("pointerdown", e => {
   e.preventDefault();
 });
 canvas.addEventListener("pointermove", e => {
+  if(mode === "eraser"){
+    const q=pos(e); eraseAt(q.x,q.y); e.preventDefault(); return;
+  }
   if (!current) return;
   const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
   for (const ev of evs) current.pts.push(pos(ev));
@@ -398,6 +434,7 @@ function endStroke(){
   if (!current) return;
   if (current.pts.length < 2) strokes.pop();
   current = null;
+  commitHistory();
   analyze();
 }
 canvas.addEventListener("pointerup", endStroke);
@@ -422,6 +459,15 @@ function rectForStroke(s){
   return {x0,y0,x1,y1,w:x1-x0,h:y1-y0};
 }
 
+function eraseAt(x,y){
+  const hit=strokes.findIndex(s=>{
+    const b=rectForStroke(s), pad=Math.max(10,brushSize*3);
+    return x>=b.x0-pad && x<=b.x1+pad && y>=b.y0-pad && y<=b.y1+pad;
+  });
+  if(hit<0) return false;
+  strokes.splice(hit,1); commitHistory(); redraw(); analyze(); return true;
+}
+
 function selectionBounds(){
   const rs=[];
   selectedParts.forEach(id=>{ const p=parts.find(x=>x.id===id); if(p) rs.push({x0:p.x,y0:p.y,x1:p.x+p.w,y1:p.y+p.h}); });
@@ -442,7 +488,7 @@ function moveSelection(dx,dy){
     const s=strokes[i]; if(!s) return;
     s.pts.forEach(p=>{ p.x+=dx; p.y+=dy; });
   });
-  redraw(); renderParts(); analyze();
+  redraw(); renderParts(); commitHistory(); analyze();
 }
 
 function finishSelection(){
@@ -741,6 +787,7 @@ document.getElementById("legend").addEventListener("pointerdown", e => {
         y: Math.max(0, Math.min(H-h, ev.clientY - s.top  - h/2)),
         w, h
       });
+      commitHistory();
       hintEl.style.display = "none";
       renderParts(); analyze();
     }
@@ -753,6 +800,7 @@ mediaLibrary.addEventListener("click", e => {
   const item=e.target.closest(".media-item"); if(!item) return;
   const photo=PHOTO_ASSETS.find(x=>x.id===item.dataset.photo); if(!photo) return;
   previewPhotos.push({id:++seq,imageId:photo.id,x:.16+(previewPhotos.length%3)*.06,y:.18+(previewPhotos.length%3)*.05,w:.68,h:.30});
+  commitHistory();
   analyze();
 });
 
@@ -829,6 +877,7 @@ partsLayer.addEventListener("pointerdown", e => {
     el.releasePointerCapture(ev.pointerId);
     el.removeEventListener("pointermove", move);
     el.removeEventListener("pointerup", up);
+    commitHistory();
     analyze();
   };
   el.addEventListener("pointermove", move);
@@ -930,7 +979,7 @@ function paint(e,t){
         line-height:${t.lead};color:${t.sub};letter-spacing:${t.tracking};">${lines}</div>`;
     }
     case "image":{
-      const photo=PHOTO_ASSETS.find(x=>x.id===e.imageId);
+      const photo=PHOTO_ASSETS.find(x=>x.id===e.imageId) || PHOTO_ASSETS[Math.abs(Math.round(e.x+e.y)) % PHOTO_ASSETS.length];
       if(photo) return `<div class="e" style="${base}border-radius:${rad}px;overflow:hidden;background:${t.accent2};">
         <img src="${esc(photo.src)}" alt="" style="display:block;width:100%;height:100%;object-fit:cover;"></div>`;
       return `<div class="e" style="${base}border-radius:${rad}px;background:${t.accent2}55;${motif(t)}
@@ -963,7 +1012,7 @@ function renderAll(){
   const t=TONES[tone];
   if(!blocks.length){
     right.innerHTML=`<div class="empty">
-      左に描くか、凡例からパーツを引っぱると、ここに案が3つ出ます。<br>
+      ラフを描くか、凡例からパーツを引っぱると、ここにプレビューが出ます。<br>
       たとえば <code>上のほうに横線を1〜2本 → 見出し</code>、
       <code>四角にバツ → 画像</code>、<code>短い横線を4本 → 本文</code>。
     </div>`;
@@ -1023,16 +1072,19 @@ function setRoughSide(side){
 }
 roughLeftEl.addEventListener("click",()=>setRoughSide("left"));
 roughRightEl.addEventListener("click",()=>setRoughSide("right"));
+setRoughSide("right");
 
 document.getElementById("hd").addEventListener("input", renderAll);
 document.getElementById("kw").addEventListener("input", renderAll);
 
 const penModeEl=document.getElementById("penMode");
 const selectModeEl=document.getElementById("selectMode");
+const eraserModeEl=document.getElementById("eraserMode");
 function setMode(next){
   mode=next;
   penModeEl.setAttribute("aria-pressed",String(mode==="pen"));
   selectModeEl.setAttribute("aria-pressed",String(mode==="select"));
+  eraserModeEl.setAttribute("aria-pressed",String(mode==="eraser"));
   partsLayer.classList.toggle("pen-mode",mode==="pen");
   partsLayer.classList.toggle("select-mode",mode==="select");
   if(mode==="pen"){
@@ -1042,6 +1094,15 @@ function setMode(next){
 }
 penModeEl.addEventListener("click",()=>setMode("pen"));
 selectModeEl.addEventListener("click",()=>setMode("select"));
+eraserModeEl.addEventListener("click",()=>setMode("eraser"));
+
+const legendToggle=document.getElementById("legendToggle");
+const legendBody=document.getElementById("legendBody");
+legendToggle.addEventListener("click",()=>{
+  const open=legendToggle.getAttribute("aria-expanded")==="true";
+  legendToggle.setAttribute("aria-expanded",String(!open));
+  legendBody.hidden=open;
+});
 
 document.querySelector(".brushes").addEventListener("click",e=>{
   const b=e.target.closest("button[data-size]"); if(!b) return;
@@ -1050,20 +1111,12 @@ document.querySelector(".brushes").addEventListener("click",e=>{
 });
 
 document.getElementById("undo").addEventListener("click", ()=>{
-  if(strokes.length) strokes.pop();
-  else if(parts.length) parts.pop();
-  else previewPhotos.pop();
-  selectedParts.clear(); selectedStrokes.clear();
-  redraw(); renderParts(); analyze();
-  if(!strokes.length && !parts.length) hintEl.style.display="";
+  if(historyIndex>0){ historyIndex--; restoreHistory(historyIndex); }
 });
-document.getElementById("clear").addEventListener("click", ()=>{
-  strokes=[]; parts=[]; previewPhotos=[]; blocks=[];
-  selectedParts.clear(); selectedStrokes.clear();
-  redraw(); annoEl.innerHTML=""; renderParts();
-  hintEl.style.display=""; renderAll();
+document.getElementById("redo").addEventListener("click", ()=>{
+  if(historyIndex<history.length-1){ historyIndex++; restoreHistory(historyIndex); }
 });
-
 fitCanvas();
+commitHistory();
 renderAll();
 </script>
