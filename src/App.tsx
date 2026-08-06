@@ -57,7 +57,7 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [moodImages, setMoodImages] = useState<MoodImage[]>(STOCK_IMAGES);
   const [selectedMood, setSelectedMood] = useState(STOCK_IMAGES[0].id);
-  const [openMenu, setOpenMenu] = useState<OpenMenu>("blocks");
+  const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [styleChoice, setStyleChoice] = useState("");
   const [adjective, setAdjective] = useState("");
   const [colorMood, setColorMood] = useState("");

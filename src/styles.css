@@ -61,3 +61,9 @@ h2, p { margin: 0; }
 @media (max-width: 1300px) { .workbench { grid-template-columns: minmax(620px, 2fr) minmax(390px, 1fr); }.rough-poster { height: min(calc(100vh - 92px), 850px); }.preview-controls { gap: 10px; }.preview-controls label { min-width: 110px; } }
 .auto-fit-text { max-height: none; overflow: visible; line-height: 1; }
 .floating-inspector { z-index: 50; transform: translate(-15%, -100%); }
+.preview-poster {
+  width: min(100%, 480px, calc((100vh - 250px) * 210 / 297));
+  height: auto;
+  max-width: none;
+  aspect-ratio: 210 / 297;
+}
