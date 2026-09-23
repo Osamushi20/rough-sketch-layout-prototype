@@ -29,8 +29,6 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
-      - name: Copy image assets
-        run: cp photo-*.png dist/
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact

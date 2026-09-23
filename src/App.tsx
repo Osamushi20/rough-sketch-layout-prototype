@@ -13,6 +13,9 @@ type DragState = { kind: "move"; id: string; originX: number; originY: number; g
 type OpenMenu = "blocks" | "board" | "grid" | null;
 
 const DEFAULT_GRID: GridSettings = { paper: "A4 縦", columns: 12, rows: 16, top: 9, right: 8, bottom: 9, left: 8, gutter: 2.1 };
+const PAPER_RATIOS: Record<string, number> = { "A4 縦": 210 / 297, "A3 縦": 297 / 420, "B4 縦": 257 / 364, "正方形": 1 };
+const GRID_LIMITS = { columns: [2, 24], rows: [2, 30], margin: [0, 25], gutter: [0, 8] } as const;
+const ROW_GUTTER_RATIO = .55;
 const assetPath = (filename: string) => `${import.meta.env.BASE_URL}${filename}`;
 const STOCK_IMAGES: MoodImage[] = [
   { id: "workshop", src: assetPath("photo-workshop.png"), label: "つくる手" },
@@ -49,6 +52,17 @@ function clampBlock(block: Block, grid: GridSettings): Block {
   return { ...block, w, h, x: Math.max(0, Math.min(grid.columns - w, block.x)), y: Math.max(0, Math.min(grid.rows - h, block.y)) };
 }
 
+function clampNumber(value: number, min: number, max: number, fallback: number) { return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback; }
+// 列・行のガター合計が紙面の半分を超えるとセルが潰れるため、分割数に応じて上限を下げる。
+function maxGutter(columns: number, rows: number) { return Math.min(GRID_LIMITS.gutter[1], 50 / Math.max(1, columns - 1), 50 / (ROW_GUTTER_RATIO * Math.max(1, rows - 1))); }
+function sanitizeGrid(grid: GridSettings): GridSettings {
+  const columns = Math.round(clampNumber(grid.columns, ...GRID_LIMITS.columns, DEFAULT_GRID.columns));
+  const rows = Math.round(clampNumber(grid.rows, ...GRID_LIMITS.rows, DEFAULT_GRID.rows));
+  const margin = (value: number, fallback: number) => clampNumber(value, ...GRID_LIMITS.margin, fallback);
+  return { paper: grid.paper in PAPER_RATIOS ? grid.paper : DEFAULT_GRID.paper, columns, rows, top: margin(grid.top, DEFAULT_GRID.top), right: margin(grid.right, DEFAULT_GRID.right), bottom: margin(grid.bottom, DEFAULT_GRID.bottom), left: margin(grid.left, DEFAULT_GRID.left), gutter: Number(clampNumber(grid.gutter, 0, maxGutter(columns, rows), DEFAULT_GRID.gutter).toFixed(2)) };
+}
+function gridVars(grid: GridSettings) { return { "--columns": grid.columns, "--rows": grid.rows, "--margin-top": `${grid.top}%`, "--margin-right": `${grid.right}%`, "--margin-bottom": `${grid.bottom}%`, "--margin-left": `${grid.left}%`, "--gutter": `${grid.gutter}%`, "--row-gutter-ratio": ROW_GUTTER_RATIO, "--paper-ratio": PAPER_RATIOS[grid.paper] ?? PAPER_RATIOS[DEFAULT_GRID.paper] } as React.CSSProperties; }
+
 function blockStyle(block: Block): React.CSSProperties { return { gridColumn: `${block.x + 1} / span ${block.w}`, gridRow: `${block.y + 1} / span ${block.h}` }; }
 
 export function App() {
@@ -75,7 +89,7 @@ export function App() {
   const canRedo = historyRef.current.future.length > 0;
   const palette = colorMood ? COLOR_PALETTES[colorMood][0] : ["#ffffff", "#1f1f1f", "#202020", "#a8a8a8"];
   const artStyle = useMemo(() => ({ "--paper": palette[0], "--ink": palette[1], "--accent": palette[2], "--accent-2": palette[3] }) as React.CSSProperties, [palette]);
-  const gridStyle = useMemo(() => ({ "--columns": grid.columns, "--rows": grid.rows, "--margin-top": `${grid.top}%`, "--margin-right": `${grid.right}%`, "--margin-bottom": `${grid.bottom}%`, "--margin-left": `${grid.left}%`, "--gutter": `${grid.gutter}%` }) as React.CSSProperties, [grid]);
+  const gridStyle = useMemo(() => gridVars(grid), [grid]);
 
   useEffect(() => { blocksRef.current = blocks; }, [blocks]);
   useEffect(() => { setBlocksRaw((items) => items.map((item) => clampBlock(item, grid))); }, [grid]);
@@ -153,7 +167,7 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  function updateGrid(patch: Partial<GridSettings>) { setGrid((current) => ({ ...current, ...patch })); }
+  function updateGrid(patch: Partial<GridSettings>) { setGrid((current) => sanitizeGrid({ ...current, ...patch })); }
   function addBlock(type: BlockType, x?: number, y?: number, level: HeadingLevel = 1, grab?: { x: number; y: number }) {
     const prototype = makeBlock(type, 0, 0, undefined, level);
     const image = type === "image" ? moodImages.find((item) => item.id === selectedMood)?.src : undefined;
@@ -222,8 +236,8 @@ export function App() {
           <button className={openMenu === "grid" ? "active" : ""} onClick={() => setOpenMenu((menu) => menu === "grid" ? null : "grid")}><Grid3X3 size={23} /><span>グリッド</span></button>
         </nav>
         {openMenu === "blocks" && <section className="block-drawer"><button className="drawer-close" onClick={() => setOpenMenu(null)} aria-label="ブロックメニュー"><ChevronLeft size={16} /></button>{([1, 2, 3] as HeadingLevel[]).map((level) => <button key={level} className={`drawer-block heading level-${level}`} draggable onDragStart={(event) => setDragPayload(event, "heading", level)} onClick={() => addBlock("heading", undefined, undefined, level)}><Type size={16} /><span>H{level}　見出し{level}</span></button>)}<button className="drawer-block body" draggable onDragStart={(event) => setDragPayload(event, "body")} onClick={() => addBlock("body")}><Layers3 size={16} /><span>本文</span></button><button className="drawer-block image" draggable onDragStart={(event) => setDragPayload(event, "image")} onClick={() => addBlock("image")}><ImageIcon size={19} /><span>画像</span></button><button className="drawer-block shape" draggable onDragStart={(event) => setDragPayload(event, "shape")} onClick={() => addBlock("shape")}><Box size={19} /><span>図形</span></button></section>}
-        {openMenu === "board" && <aside className="overlay-panel board-panel"><button className="drawer-close" onClick={() => setOpenMenu(null)} aria-label="閉じる"><ChevronLeft size={16} /></button><h2>イメージボード</h2><div className="mood-grid">{moodImages.map((image) => <button key={image.id} className={`mood-image ${selectedMood === image.id ? "selected" : ""}`} onClick={() => setSelectedMood(image.id)}><img src={image.src} alt={image.label} /></button>)}<label className="mood-upload"><Upload size={18} /><input type="file" accept="image/*" multiple onChange={onImageUpload} /></label></div></aside>}
-        {openMenu === "grid" && <aside className="overlay-panel grid-panel"><button className="drawer-close" onClick={() => setOpenMenu(null)} aria-label="閉じる"><ChevronLeft size={16} /></button><GridControls grid={grid} onChange={updateGrid} /></aside>}
+        {openMenu === "board" && <aside className="overlay-panel board-panel"><button className="drawer-close" onClick={() => setOpenMenu(null)} aria-label="閉じる"><ChevronLeft size={16} /></button><div className="panel-scroll"><h2>イメージボード</h2><div className="mood-grid">{moodImages.map((image) => <button key={image.id} className={`mood-image ${selectedMood === image.id ? "selected" : ""}`} onClick={() => setSelectedMood(image.id)}><img src={image.src} alt={image.label} /></button>)}<label className="mood-upload"><Upload size={18} /><input type="file" accept="image/*" multiple onChange={onImageUpload} /></label></div></div></aside>}
+        {openMenu === "grid" && <aside className="overlay-panel grid-panel"><button className="drawer-close" onClick={() => setOpenMenu(null)} aria-label="閉じる"><ChevronLeft size={16} /></button><div className="panel-scroll"><GridControls grid={grid} onChange={updateGrid} /></div></aside>}
         <div className="rough-stage" ref={stageRef}><div className="zoom-frame" style={{ transform: `scale(${zoom})` }}><div className="rough-poster" style={gridStyle}><div className="rough-poster-grid poster-grid" ref={gridRef} onDragOver={(event) => event.preventDefault()} onDrop={dropBlock} onPointerMove={moveDrag} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }}>{Array.from({ length: grid.columns * grid.rows }, (_, index) => { const column = index % grid.columns; const row = Math.floor(index / grid.columns); return <div key={index} className="grid-cell" data-column={column} data-row={row} style={{ gridColumn: column + 1, gridRow: row + 1 }} />; })}{blocks.map((block) => <RoughBlock key={block.id} block={block} selected={block.id === selectedId} editing={block.id === editingId} onPointerDown={(event) => startDrag(event, block)} onResize={(event, handle) => startResize(event, block, handle)} onEditStart={() => { setSelectedId(block.id); setEditingId(block.id); }} onEditEnd={() => setEditingId(null)} onTextChange={(text) => updateSelected({ text })} />)}{selected && editingId !== selected.id && <FloatingInspector block={selected} grid={grid} moodImages={moodImages} onChange={updateSelected} onCopy={copySelected} onBringFront={() => moveLayer("front")} onSendBack={() => moveLayer("back")} onDelete={deleteSelected} />}</div></div></div></div>
       </section>
       <section className="preview-workspace"><div className="preview-stage"><PreviewPoster blocks={blocks} palette={palette} grid={grid} styleChoice={styleChoice} adjective={adjective} /></div><div className="preview-controls"><label><select value={styleChoice} onChange={(event) => setStyleChoice(event.target.value)}><option value="">表現</option>{STYLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><label><select value={adjective} onChange={(event) => setAdjective(event.target.value)}><option value="">雰囲気</option>{MOOD_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label><label><select value={colorMood} onChange={(event) => setColorMood(event.target.value)}><option value="">色合い</option>{COLOR_OPTIONS.map((option) => <option key={option}>{option}</option>)}</select></label></div></section>
@@ -231,9 +245,17 @@ export function App() {
   </main>;
 }
 
+// 入力途中の空欄や範囲外の値は下書きとして保持し、範囲内の値だけを即時反映する。確定時は範囲内へ丸めて反映する。
+function NumberField({ label, value, min, max, step = 1, onCommit }: { label: string; value: number; min: number; max: number; step?: number; onCommit: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => { setDraft(String(value)); }, [value]);
+  return <label><span>{label}</span><input type="number" min={min} max={Number(max.toFixed(2))} step={step} value={draft} onChange={(event) => { setDraft(event.target.value); const next = Number(event.target.value); if (event.target.value !== "" && Number.isFinite(next) && next >= min && next <= max) onCommit(next); }} onBlur={() => { const next = Number(draft); if (draft !== "" && Number.isFinite(next)) onCommit(Math.min(max, Math.max(min, next))); setDraft(String(value)); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>;
+}
+
 function GridControls({ grid, onChange }: { grid: GridSettings; onChange: (patch: Partial<GridSettings>) => void }) {
-  const number = (key: keyof GridSettings, label: string, min: number, max: number) => <label key={key}><span>{label}</span><input type="number" min={min} max={max} value={grid[key] as number} onChange={(event) => onChange({ [key]: Number(event.target.value) })} /></label>;
-  return <div className="grid-controls"><label className="paper-field"><span>紙面の大きさ</span><select value={grid.paper} onChange={(event) => onChange({ paper: event.target.value })}><option>A4 縦</option><option>A3 縦</option><option>B4 縦</option><option>正方形</option></select></label><p>4辺の余白（%）</p><div className="grid-number-pair">{number("top", "上", 0, 25)}{number("bottom", "下", 0, 25)}{number("left", "左", 0, 25)}{number("right", "右", 0, 25)}</div><p>分割</p><div className="grid-number-pair">{number("columns", "横", 2, 24)}{number("rows", "縦", 2, 30)}</div>{number("gutter", "グリッド間の余白（%）", 0, 8)}</div>;
+  const field = (key: "top" | "right" | "bottom" | "left" | "columns" | "rows" | "gutter", label: string, min: number, max: number, step = 1) => <NumberField key={key} label={label} value={grid[key]} min={min} max={max} step={step} onCommit={(value) => onChange({ [key]: value })} />;
+  const [marginMin, marginMax] = GRID_LIMITS.margin;
+  return <div className="grid-controls"><label className="paper-field"><span>紙面の大きさ</span><select value={grid.paper} onChange={(event) => onChange({ paper: event.target.value })}>{Object.keys(PAPER_RATIOS).map((paper) => <option key={paper}>{paper}</option>)}</select></label><p>4辺の余白（%）</p><div className="grid-number-pair">{field("top", "上", marginMin, marginMax)}{field("bottom", "下", marginMin, marginMax)}{field("left", "左", marginMin, marginMax)}{field("right", "右", marginMin, marginMax)}</div><p>分割</p><div className="grid-number-pair">{field("columns", "横", ...GRID_LIMITS.columns)}{field("rows", "縦", ...GRID_LIMITS.rows)}</div>{field("gutter", "グリッド間の余白（%）", 0, maxGutter(grid.columns, grid.rows), .1)}</div>;
 }
 
 function RoughBlock({ block, selected, editing, onPointerDown, onResize, onEditStart, onEditEnd, onTextChange }: { block: Block; selected: boolean; editing: boolean; onPointerDown: (event: PointerEvent<HTMLDivElement>) => void; onResize: (event: PointerEvent<HTMLButtonElement>, handle: ResizeHandle) => void; onEditStart: () => void; onEditEnd: () => void; onTextChange: (text: string) => void }) {
@@ -272,7 +294,7 @@ function AutoFitText({ block, fitKey }: { block: Block; fitKey: string }) {
 }
 
 function PreviewPoster({ blocks, palette, grid, styleChoice, adjective }: { blocks: Block[]; palette: string[]; grid: GridSettings; styleChoice: string; adjective: string }) {
-  const style = { "--columns": grid.columns, "--rows": grid.rows, "--margin-top": `${grid.top}%`, "--margin-right": `${grid.right}%`, "--margin-bottom": `${grid.bottom}%`, "--margin-left": `${grid.left}%`, "--gutter": `${grid.gutter}%`, background: palette[0], color: palette[1] } as React.CSSProperties;
+  const style = { ...gridVars(grid), background: palette[0], color: palette[1] } as React.CSSProperties;
   const className = ["preview-poster", styleChoice, adjective ? `tone-${adjective}` : ""].join(" ");
   const fitKey = `${styleChoice}-${adjective}`;
   return <div className={className} style={style}><div className="preview-grid poster-grid">{blocks.map((block) => { const alignment = { justifyContent: block.align === "center" ? "center" : block.align === "right" ? "flex-end" : "flex-start", alignItems: block.valign === "top" ? "flex-start" : block.valign === "bottom" ? "flex-end" : "center", textAlign: block.align ?? "left", background: block.type === "button" || block.type === "logo" ? palette[2] : undefined } as React.CSSProperties; const ratio = block.w / block.h; const shapeMode = ratio >= 3 ? "shape-line" : block.w * block.h >= 12 ? "shape-field" : "shape-accent"; return <div key={block.id} className={`preview-block ${block.type} level-${block.level ?? 0} ${block.type === "shape" ? shapeMode : ""}`} style={{ ...blockStyle(block), ...alignment }}>{block.type === "image" ? <img src={block.image} alt="" /> : block.type === "shape" ? <span /> : <AutoFitText block={block} fitKey={fitKey} />}</div>; })}</div></div>;
